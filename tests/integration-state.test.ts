@@ -1,0 +1,24 @@
+import { describe, expect, it } from 'vitest';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { StateStore } from '../src/core/state/store.js';
+import { createHttpDevSpaceClient } from '../src/core/devspace/http-client.js';
+
+describe('integration persistence and DevSpace transport', () => {
+  it('enforces monotonic authority through StateStore', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'awgpt-state-'));
+    const store = new StateStore(path.join(dir, 'state.json'));
+    const base = { schema:'codex.chatgpt.oracle-run-state/v1' as const, run_id:'run-test-1234', project_root:dir, mission_path:path.join(dir,'m.md'), mode:'browser' as const, session_authority:'pre_submit' as const, transport_status:'pending' as const, task_outcome:'pending' as const };
+    await store.write(base);
+    await expect(store.write({...base, session_authority:'settled', transport_status:'failed'}, {explicitSettle:true})).resolves.toBeUndefined();
+    await expect(store.write({...base, session_authority:'pre_submit'})).rejects.toThrow();
+  });
+
+  it('uses JSON-RPC tools/call for exact DevSpace methods', async () => {
+    const calls: any[] = [];
+    const client = createHttpDevSpaceClient('http://127.0.0.1:1', async (_u, init) => { calls.push(JSON.parse(String(init?.body))); return new Response(JSON.stringify({result:{allowedRoots:['/tmp/root']}}), {status:200}); });
+    await client.open_workspace({root:'/tmp/root'}); await client.list_directory({path:'/tmp/root'});
+    expect(calls.map(c => c.params.name)).toEqual(['open_workspace','ls']);
+  });
+});
