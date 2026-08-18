@@ -703,6 +703,27 @@ async function assertRunDirectory(dir, expected) {
   if (await realpath(dir).catch(() => "") !== expected.real) throw new Error("RECOVERY_RUN_DIRECTORY_CHANGED");
   await assertSafeOutputPath(path3.join(dir, "recovery-check.md"), dir);
 }
+async function writeRecoveryAuxiliary(dir, name, value, identity) {
+  await assertRunDirectory(dir, identity);
+  const destination = path3.join(dir, name);
+  const existing = await lstat(destination).catch(() => void 0);
+  if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error("RECOVERY_AUXILIARY_PATH_INVALID");
+  const temporary = path3.join(dir, `.${name}.${randomUUID2()}.tmp`);
+  try {
+    await writeFile(temporary, value, { encoding: "utf8", flag: "wx", mode: 384 });
+    await assertRunDirectory(dir, identity);
+    await rename2(temporary, destination);
+    await assertRunDirectory(dir, identity);
+    const written = await lstat(destination).catch(() => void 0);
+    const parent = await realpath(path3.dirname(destination)).catch(() => "");
+    if (!written?.isFile() || written.isSymbolicLink() || parent !== identity.real) {
+      throw new Error("RECOVERY_AUXILIARY_PATH_INVALID");
+    }
+    return destination;
+  } finally {
+    await rm2(temporary, { force: true }).catch(() => void 0);
+  }
+}
 function validateOracleCommand(command) {
   if (!command.length || command.some((part) => !part)) throw new Error("ORACLE_COMMAND_INVALID");
   const executable = path3.basename(command[0]).toLowerCase();
@@ -825,8 +846,8 @@ async function executeExactRecovery(plan) {
     });
     await assertRunDirectory(runDir, runDirIdentity);
     await Promise.all([
-      writeFile(`${stdoutPath}.tmp`, result.stdout, "utf8").then(() => rename2(`${stdoutPath}.tmp`, stdoutPath)),
-      writeFile(`${stderrPath}.tmp`, result.stderr, "utf8").then(() => rename2(`${stderrPath}.tmp`, stderrPath))
+      writeRecoveryAuxiliary(runDir, path3.basename(stdoutPath), result.stdout, runDirIdentity),
+      writeRecoveryAuxiliary(runDir, path3.basename(stderrPath), result.stderr, runDirIdentity)
     ]);
     await assertRunDirectory(runDir, runDirIdentity);
     const candidateStat = await lstat(plan.output_path).catch(() => void 0);
@@ -3415,6 +3436,7 @@ export {
   validateReceiptChain,
   validateWorkflowStateConsistency,
   workflowTransitions,
-  workspaceCommands
+  workspaceCommands,
+  writeRecoveryAuxiliary
 };
 //# sourceMappingURL=index.js.map

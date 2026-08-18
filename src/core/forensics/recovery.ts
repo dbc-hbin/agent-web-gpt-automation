@@ -35,6 +35,34 @@ async function assertRunDirectory(dir: string, expected: { dev: number; ino: num
   await assertSafeOutputPath(path.join(dir, 'recovery-check.md'), dir);
 }
 
+/** Write recovery diagnostics without following attacker-controlled fixed temp paths. */
+export async function writeRecoveryAuxiliary(
+  dir: string,
+  name: string,
+  value: string,
+  identity: { dev: number; ino: number; real: string },
+): Promise<string> {
+  await assertRunDirectory(dir, identity);
+  const destination = path.join(dir, name);
+  const existing = await lstat(destination).catch(() => undefined);
+  if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error('RECOVERY_AUXILIARY_PATH_INVALID');
+  const temporary = path.join(dir, `.${name}.${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporary, value, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    await assertRunDirectory(dir, identity);
+    await rename(temporary, destination);
+    await assertRunDirectory(dir, identity);
+    const written = await lstat(destination).catch(() => undefined);
+    const parent = await realpath(path.dirname(destination)).catch(() => '');
+    if (!written?.isFile() || written.isSymbolicLink() || parent !== identity.real) {
+      throw new Error('RECOVERY_AUXILIARY_PATH_INVALID');
+    }
+    return destination;
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
+}
+
 export interface ExactRecoveryPlan {
   run_id: string;
   project_root: string;
@@ -189,8 +217,8 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
   });
   await assertRunDirectory(runDir, runDirIdentity);
   await Promise.all([
-    writeFile(`${stdoutPath}.tmp`, result.stdout, 'utf8').then(() => rename(`${stdoutPath}.tmp`, stdoutPath)),
-    writeFile(`${stderrPath}.tmp`, result.stderr, 'utf8').then(() => rename(`${stderrPath}.tmp`, stderrPath)),
+    writeRecoveryAuxiliary(runDir, path.basename(stdoutPath), result.stdout, runDirIdentity),
+    writeRecoveryAuxiliary(runDir, path.basename(stderrPath), result.stderr, runDirIdentity),
   ]);
   await assertRunDirectory(runDir, runDirIdentity);
   const candidateStat = await lstat(plan.output_path).catch(() => undefined);
