@@ -213,9 +213,10 @@ export function createCLI(): Command {
     .option('--oracle-command <path>')
     .option('--oracle-arg <value...>')
     .option('--oracle-home <path>')
+    .option('--dry-run', 'validate and plan without launching Oracle')
     .option('--devspace-url <url>', 'DevSpace MCP endpoint', 'http://127.0.0.1:7676/mcp')
     .action(async options => {
-      try { const client = createHttpDevSpaceClient(options.devspaceUrl); const devspace = { qualify: async (root: string) => { const { qualifyExactProjectRoot } = await import('../core/devspace/qualification.js'); const result = await qualifyExactProjectRoot(root, client); return { ok: result.ok, reason: result.code }; } }; console.log(JSON.stringify(await runOracle({ projectRoot: options.projectRoot, missionPath: options.mission, runRoot: options.runRoot, manifestPath: options.manifest, oracleCommand: options.oracleCommand ? [options.oracleCommand] : undefined, oracleArgs: options.oracleArg, oracleHome: options.oracleHome, devspace }), null, 2)); }
+      try { const client = createHttpDevSpaceClient(options.devspaceUrl); const devspace = { qualify: async (root: string) => { const { qualifyExactProjectRoot } = await import('../core/devspace/qualification.js'); const result = await qualifyExactProjectRoot(root, client); return { ok: result.ok, reason: result.code }; } }; console.log(JSON.stringify(await runOracle({ projectRoot: options.projectRoot, missionPath: options.mission, runRoot: options.runRoot, manifestPath: options.manifest, oracleCommand: options.oracleCommand ? [options.oracleCommand] : undefined, oracleArgs: options.oracleArg, oracleHome: options.oracleHome, dryRun: options.dryRun === true, devspace }), null, 2)); }
       catch (e) { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; }
     });
 
