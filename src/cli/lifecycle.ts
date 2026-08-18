@@ -29,6 +29,15 @@ const InstallManifestSchema = z.object({
   include: z.array(z.string().min(1)),
 }).passthrough();
 
+export async function readInstallManifest(sourceRoot: string): Promise<z.infer<typeof InstallManifestSchema>> {
+  const root = path.resolve(sourceRoot);
+  return InstallManifestSchema.parse(JSON.parse(await readFile(path.join(root, 'install-manifest.json'), 'utf8')));
+}
+
+export async function manifestVersion(sourceRoot: string): Promise<string> {
+  return (await readInstallManifest(sourceRoot)).version;
+}
+
 const InstallRecordSchema = z.object({
   path: z.string().min(1),
   action: z.enum(['created', 'overwritten']),
@@ -124,7 +133,7 @@ async function expandPattern(root: string, pattern: string): Promise<string[]> {
 
 export async function manifestFiles(sourceRoot: string): Promise<{ version: string; files: string[] }> {
   const root = path.resolve(sourceRoot);
-  const manifest = InstallManifestSchema.parse(JSON.parse(await readFile(path.join(root, 'install-manifest.json'), 'utf8')));
+  const manifest = await readInstallManifest(root);
   const files = new Set<string>();
   for (const pattern of manifest.include) {
     for (const relative of await expandPattern(root, pattern)) {

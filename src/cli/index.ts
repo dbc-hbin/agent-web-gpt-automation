@@ -10,13 +10,57 @@ import { runOracle, loadRunState, stopRecorded } from '../core/run/runtime.js';
 import { planExactRecovery, executeExactRecovery } from '../core/forensics/recovery.js';
 import { proveNoSubmission } from '../core/forensics/no-submission.js';
 import { createHttpDevSpaceClient } from '../core/devspace/http-client.js';
+import { runLocalGate } from '../core/orchestrator/gate-runner.js';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const packageMetadata = require('../../package.json') as { version?: string };
+export function publicVersion(): string {
+  const version = packageMetadata.version;
+  if (!version) throw new Error('PACKAGE_VERSION_MISSING');
+  return version;
+}
+
+/** Return the user-facing argv, excluding the node executable and script path. */
+export function publicArgv(argv = process.argv): string[] {
+  return argv.slice(2);
+}
 
 export function createCLI(): Command {
   const program = new Command();
   program
     .name('awgpt')
     .description('Guarded, recoverable web GPT automation')
-    .version('1.0.0');
+    .version(publicVersion());
+
+  program
+    .command('local-gate')
+    .description('Run a deterministic local gate without a shell')
+    .requiredOption('--project-root <path>', 'exact project root')
+    .requiredOption('--argv <value...>', 'executable and arguments')
+    .option('--env <key=value...>', 'environment additions')
+    .option('--timeout-ms <milliseconds>', 'gate timeout')
+    .action(async options => {
+      try {
+        const env: Record<string, string> = {};
+        for (const item of options.env ?? []) {
+          const separator = item.indexOf('=');
+          if (separator <= 0) throw new Error('GATE_ENV_INVALID');
+          env[item.slice(0, separator)] = item.slice(separator + 1);
+        }
+        const result = await runLocalGate({
+          argv: options.argv,
+          projectRoot: options.projectRoot,
+          env,
+          timeoutMs: options.timeoutMs === undefined ? undefined : Number(options.timeoutMs),
+        });
+        console.log(JSON.stringify({ schema: 'codex.chatgpt.local-gate/v1', ...result }, null, 2));
+        if (!result.ok) process.exitCode = 2;
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
+      }
+    });
 
   program
     .command('doctor')
