@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ultra Economy Mode"
+  short_description: "Luna Max local command with web-first execution"
+  default_prompt: "Use $ultra-economy-mode to complete this task with Luna Max locally and staged web execution."

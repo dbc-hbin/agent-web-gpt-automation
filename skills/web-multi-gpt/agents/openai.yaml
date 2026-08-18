@@ -1,0 +1,6 @@
+interface:
+  display_name: "Oracle Web Multi-GPT"
+  short_description: "Run genuine parallel Oracle GPT sessions"
+  default_prompt: "$web-multi-gpt C:\\project\\multi.json"
+policy:
+  allow_implicit_invocation: false

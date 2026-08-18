@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "codex.chatgpt.oracle-workflow/v1",
+  "title": "Phase 4 comprehensive workflow contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "run_id", "project_root", "mission_path", "profile", "stage", "session_authority", "task_outcome", "revision", "receipts"],
+  "properties": {
+    "schema": {"const": "codex.chatgpt.oracle-workflow/v1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "project_root": {"type": "string", "minLength": 1},
+    "mission_path": {"type": "string", "minLength": 1},
+    "profile": {"enum": ["default", "ultra-economy"]},
+    "stage": {"enum": ["plan", "review", "web-multi", "pro", "implementation", "final-web-gate", "complete", "attention_required"]},
+    "session_authority": {"enum": ["pre_submit", "live", "submitted_unknown", "terminal_observed", "settled"]},
+    "task_outcome": {"enum": ["pending", "EXECUTED", "NOT_EXECUTED", "BLOCKED"]},
+    "revision": {"type": "integer", "minimum": 0},
+    "receipts": {"type": "array", "items": {"$ref": "#/$defs/receipt"}}
+  },
+  "$defs": {
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receipt_id", "run_id", "stage", "status", "input_sha256", "output_sha256", "next_stage"],
+      "properties": {
+        "receipt_id": {"type": "string", "minLength": 1},
+        "run_id": {"type": "string", "minLength": 1},
+        "stage": {"enum": ["plan", "review", "web-multi", "pro", "implementation", "final-web-gate"]},
+        "status": {"enum": ["started", "completed", "failed", "blocked"]},
+        "input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "output_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "previous_receipt_sha256": {"type": ["string", "null"], "pattern": "^(null|[a-f0-9]{64})$"},
+        "next_stage": {"enum": ["plan", "review", "web-multi", "pro", "implementation", "final-web-gate", "complete", "attention_required"]}
+      }
+    }
+  }
+}

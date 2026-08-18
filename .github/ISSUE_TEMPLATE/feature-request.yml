@@ -1,0 +1,51 @@
+name: Feature request
+description: Propose a backward-compatible workflow or safety improvement
+title: "[Feature]: "
+labels: [enhancement, needs-triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the user outcome, not only the desired implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Primary scope
+      options:
+        - Install and onboarding
+        - Oracle transport and recovery
+        - DevSpace and project roots
+        - Web workflow or mode
+        - Local Multi-GPT or Ultra Economy Mode
+        - Documentation and developer experience
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and compatibility boundary
+      description: Explain how the proposal preserves credentials, exact session identity, rollback, and frozen legacy assets.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I can help test this on Windows.
+        - label: I can help test this on macOS.
+        - label: I am willing to prepare a pull request.

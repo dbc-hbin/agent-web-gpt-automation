@@ -1,0 +1,45 @@
+__pycache__/
+node_modules/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.pytest-*/
+.testdeps/
+.global-policy-staging/
+.ai-bridge/
+.pytest_tmp*/
+.pytest*/
+.codex-tmp/
+/Microsoft/Windows/PowerShell/ModuleAnalysisCache
+
+# Runtime / browser state
+data/
+profile/
+state/
+!ts/src/core/state/
+!ts/src/core/state/*.ts
+runtime/
+logs/
+assets/reports/
+**/assets/reports/
+*.log
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
+# Local generated/debug artifacts
+debug-*.png
+permission-*-analysis.json
+*.bak
+*.tmp
+*.local.*
+
+# Secrets / machine-local config
+*.env
+.env
+registry.json
+*.token
+*secret*
+*credential*

@@ -1,0 +1,6 @@
+interface:
+  display_name: "MCP Update Guard"
+  short_description: "Safely update Oracle GPT and shared automation."
+  default_prompt: "Update the requested shared automation while preserving customizations; route all new GPT work through Oracle."
+policy:
+  allow_implicit_invocation: true

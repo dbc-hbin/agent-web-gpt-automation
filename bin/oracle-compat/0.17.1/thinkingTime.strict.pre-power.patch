@@ -1,0 +1,40 @@
+﻿diff --git a/dist/src/browser/actions/thinkingTime.js b/dist/src/browser/actions/thinkingTime.js
+index 491445b..67aa3c7 100644
+--- a/dist/src/browser/actions/thinkingTime.js
++++ b/dist/src/browser/actions/thinkingTime.js
+@@ -32,6 +32,13 @@ export async function ensureThinkingTime(Runtime, level, logger, desiredModel) {
+     const targetModelKind = inferThinkingTargetModelKind(desiredModel);
+     const observedModelKind = result && "modelKind" in result ? result.modelKind : null;
+     const strictProEffort = (targetModelKind === "pro" || observedModelKind === "pro") && level === "extended";
++    // GPT-5.6 Sol has two explicit high-end UI choices: Extra High for regular
++    // work and Pro for attachment-only Pro work. Neither may silently retain
++    // the composer default; selection proof is required before prompt send.
++    const strictGpt56Effort = /(?:^|[^0-9])5[._ -]6(?:[^0-9]|$)/i.test(desiredModel ?? "") &&
++        (level === "extra-high" || level === "heavy");
++    const strictRequestedEffort = strictProEffort || strictGpt56Effort;
++    const requiredEffortLabel = strictProEffort ? "Pro Extended" : capitalizedLevel;
+     switch (result?.status) {
+         case "already-selected":
+             logger(formatBrowserThinkingLog(`${result.label ?? capitalizedLevel} (already selected)`));
+@@ -52,8 +59,8 @@ export async function ensureThinkingTime(Runtime, level, logger, desiredModel) {
+                     ? ` for ${targetModelKind}`
+                     : "";
+             const message = `Thinking time: ${result.status.replaceAll("-", " ")}${kindHint} (requested ${capitalizedLevel})`;
+-            if (strictProEffort) {
+-                throw new Error(`${message}; refusing to submit without confirmed Pro Extended.`);
++            if (strictRequestedEffort) {
++                throw new Error(`${message}; refusing to submit without confirmed ${requiredEffortLabel}.`);
+             }
+             // Nothing was clicked, so the tab keeps whatever effort it already had —
+             // which is not necessarily ChatGPT's default.
+@@ -63,8 +70,8 @@ export async function ensureThinkingTime(Runtime, level, logger, desiredModel) {
+         default: {
+             await logDomFailure(Runtime, logger, "thinking-time-unknown");
+             logPickerDiagnostic(result, logger);
+-            if (strictProEffort) {
+-                throw new Error(`Thinking time: unknown outcome selecting ${capitalizedLevel}; refusing to submit without confirmed Pro Extended.`);
++            if (strictRequestedEffort) {
++                throw new Error(`Thinking time: unknown outcome selecting ${capitalizedLevel}; refusing to submit without confirmed ${requiredEffortLabel}.`);
+             }
+             logger(formatBrowserThinkingLog(`unknown outcome selecting ${capitalizedLevel}; continuing with ChatGPT default.`));
+             return;

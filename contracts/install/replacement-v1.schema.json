@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "codexpro.install-replacement/v1",
+  "type": "object",
+  "required": ["schema", "path", "action", "installed_sha256"],
+  "properties": {
+    "schema": {"const": "codexpro.install-replacement/v1"},
+    "path": {"type": "string", "minLength": 1},
+    "action": {"enum": ["created", "overwritten"]},
+    "installed_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "backup_sha256": {"type": ["string", "null"]}
+  },
+  "additionalProperties": true
+}

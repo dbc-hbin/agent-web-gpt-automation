@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "codex.chatgpt.orchestrator.contract-definitions/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "states", "transitions", "receipt"],
+  "properties": {
+    "schema": {"const": "codex.chatgpt.orchestrator.contract-definitions/v1"},
+    "states": {"type": "array", "items": {"enum": ["plan", "review", "web-multi", "pro", "implementation", "final-web-gate", "complete", "attention_required"]}},
+    "transitions": {"type": "array", "items": {"type": "object", "required": ["from", "to"], "properties": {"from": {"type": "string"}, "to": {"type": "string"}}, "additionalProperties": false}},
+    "receipt": {"type": "object", "required": ["receipt_id", "run_id", "stage", "input_sha256", "output_sha256", "next_stage", "prologue", "external_actions", "recovery"], "properties": {"receipt_id": {"type": "string", "minLength": 1}, "run_id": {"type": "string", "minLength": 1}, "stage": {"type": "string"}, "input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "output_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "next_stage": {"type": "string"}, "prologue": {"type": "object", "required": ["project_root", "mission_sha256", "profile", "semantic_revision"], "properties": {"project_root": {"type": "string"}, "mission_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "profile": {"enum": ["default", "ultra-economy"]}, "semantic_revision": {"type": "integer", "minimum": 0}}, "additionalProperties": false}, "external_actions": {"type": "array", "items": {"type": "object", "required": ["kind", "status"], "properties": {"kind": {"enum": ["oracle", "devspace", "process", "local_gate"]}, "status": {"enum": ["started", "completed", "failed", "audited"]}}, "additionalProperties": false}}, "recovery": {"type": "object", "required": ["session_authority", "attempt"], "properties": {"session_authority": {"enum": ["pre_submit", "submitted_unknown", "live", "terminal_observed", "settled"]}, "attempt": {"type": "integer", "minimum": 0}, "exact_slug": {"type": "string"}}, "additionalProperties": false}}, "additionalProperties": false}
+  }
+}

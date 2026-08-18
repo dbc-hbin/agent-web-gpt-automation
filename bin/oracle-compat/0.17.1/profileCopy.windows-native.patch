@@ -1,0 +1,47 @@
+diff --git a/dist/src/browser/profileCopy.js b/dist/src/browser/profileCopy.js
+index c253a98..5e3913e 100644
+--- a/dist/src/browser/profileCopy.js
++++ b/dist/src/browser/profileCopy.js
+@@ -47,18 +47,31 @@ export async function copyChromeProfile(srcUserDataDir, destDir, requestedProfil
+         // `Local State` is required (holds the Keychain-wrapped key that decrypts the
+         // cookies), so a copy failure must fail fast — otherwise the run continues with
+         // a profile that silently looks logged-out.
+-        const args = ["-a"];
+-        for (const exclude of RSYNC_EXCLUDES) {
+-            args.push("--exclude", exclude);
++        if (process.platform === "win32") {
++            const excluded = RSYNC_EXCLUDES.map((value) => value.replaceAll("\\", "/").replace(/\/$/, ""));
++            await cp(srcProfile, destProfile, {
++                recursive: true,
++                force: true,
++                filter: (source) => {
++                    const relative = path.relative(srcProfile, source).replaceAll("\\", "/");
++                    return !excluded.some((value) => relative === value || relative.startsWith(`${value}/`));
++                },
++            });
++        }
++        else {
++            const args = ["-a"];
++            for (const exclude of RSYNC_EXCLUDES) {
++                args.push("--exclude", exclude);
++            }
++            args.push(`${srcProfile}/`, `${destProfile}/`);
++            await new Promise((resolve, reject) => {
++                const child = spawn("rsync", args, { stdio: "ignore" });
++                child.on("error", (err) => reject(new Error(`--copy-profile requires rsync on PATH (spawn failed): ${err.message}`)));
++                child.on("close", (code) => code === 0 || code === 24
++                    ? resolve()
++                    : reject(new Error(`rsync failed copying Chrome profile (exit ${code})`)));
++            });
+         }
+-        args.push(`${srcProfile}/`, `${destProfile}/`);
+-        await new Promise((resolve, reject) => {
+-            const child = spawn("rsync", args, { stdio: "ignore" });
+-            child.on("error", (err) => reject(new Error(`--copy-profile requires rsync on PATH (spawn failed): ${err.message}`)));
+-            child.on("close", (code) => code === 0 || code === 24
+-                ? resolve()
+-                : reject(new Error(`rsync failed copying Chrome profile (exit ${code})`)));
+-        });
+         return profileDirectory;
+     }
+     catch (error) {

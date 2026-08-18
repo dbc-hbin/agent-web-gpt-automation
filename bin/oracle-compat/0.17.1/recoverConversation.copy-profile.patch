@@ -1,0 +1,97 @@
+diff --git a/dist/src/browser/recoverConversation.js b/dist/src/browser/recoverConversation.js
+index e1b4568..a60d1a0 100644
+--- a/dist/src/browser/recoverConversation.js
++++ b/dist/src/browser/recoverConversation.js
+@@ -1,9 +1,14 @@
++import { mkdtemp, rm } from "node:fs/promises";
++import os from "node:os";
++import path from "node:path";
+ import { isAnswerNowPlaceholderText } from "./actions/assistantResponse.js";
++import { launchChrome } from "./chromeLifecycle.js";
+ import { resolveBrowserConfig } from "./config.js";
+ import { acquireManualLoginChromeForRun, isImageOnlyUiChromeText } from "./index.js";
+ import { isRecoverableChatGptConversationUrl } from "./reattachability.js";
+ import { harvestChatGptTab, openChatGptTarget } from "./liveTabs.js";
+-const DEFAULT_READY_TIMEOUT_MS = 30_000;
++import { copyChromeProfile } from "./profileCopy.js";
++const DEFAULT_READY_TIMEOUT_MS = 90_000;
+ const READY_POLL_MS = 1_000;
+ /**
+  * Picks the URL to navigate the recovered Chrome tab to.
+@@ -29,6 +34,10 @@ export function resolveRecoveryUrl(meta) {
+ export function resolveRecoveryProfileDir(meta) {
+     const config = meta?.browser?.config;
+     const resolved = resolveBrowserConfig(config);
++    const copyProfileSource = resolved.copyProfileSource;
++    if (typeof copyProfileSource === "string" && copyProfileSource.trim().length > 0) {
++        return copyProfileSource.trim();
++    }
+     if (!resolved.manualLogin) {
+         throw new Error("Cannot recover conversation: session was not run with a manual-login browser profile.");
+     }
+@@ -39,6 +48,28 @@ export function resolveRecoveryProfileDir(meta) {
+     }
+     return profileDir;
+ }
++function wrapEphemeralRecoveryChrome(chrome, userDataDir) {
++    let cleanupPromise = null;
++    const cleanup = () => {
++        if (!cleanupPromise) {
++            cleanupPromise = Promise.resolve()
++                .then(() => chrome.kill())
++                .catch(() => undefined)
++                .then(() => rm(userDataDir, { recursive: true, force: true }))
++                .catch(() => undefined);
++        }
++        return cleanupPromise;
++    };
++    return {
++        ...chrome,
++        kill: cleanup,
++        process: {
++            unref: () => {
++                void cleanup();
++            },
++        },
++    };
++}
+ async function waitForRecoveredConversationReady(endpoint, ref, timeoutMs) {
+     const deadline = Date.now() + timeoutMs;
+     let lastError = null;
+@@ -109,10 +140,33 @@ export async function recoverConversationTab(meta, logger, options = {}) {
+             logger(`[browser] Recovery: existing Chrome could not reopen the conversation (${message}).`);
+         }
+     }
+-    const userDataDir = resolveRecoveryProfileDir(meta);
++    const profileSource = resolveRecoveryProfileDir(meta);
+     const config = resolveBrowserConfig(meta.browser?.config);
+-    logger(`[browser] Recovery: relaunching Chrome with profile ${userDataDir} and navigating to ${url}`);
+-    const { chrome } = await acquireManualLoginChromeForRun(userDataDir, config, logger, meta.id, {});
++    let chrome;
++    if (config.copyProfileSource) {
++        const userDataDir = await mkdtemp(path.join(os.tmpdir(), "oracle-recovery-"));
++        try {
++            const chromeProfile = await copyChromeProfile(profileSource, userDataDir, config.chromeProfile);
++            logger(`[browser] Recovery: launching an isolated profile copy and navigating to ${url}`);
++            const launched = await launchChrome({
++                ...config,
++                manualLogin: false,
++                manualLoginProfileDir: null,
++                copyProfileSource: profileSource,
++                chromeProfile,
++                keepBrowser: false,
++            }, userDataDir, logger);
++            chrome = wrapEphemeralRecoveryChrome(launched, userDataDir);
++        }
++        catch (error) {
++            await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);
++            throw error;
++        }
++    }
++    else {
++        logger(`[browser] Recovery: relaunching Chrome with profile ${profileSource} and navigating to ${url}`);
++        ({ chrome } = await acquireManualLoginChromeForRun(profileSource, config, logger, meta.id, {}));
++    }
+     const host = chrome.host ?? "127.0.0.1";
+     const port = chrome.port;
+     try {

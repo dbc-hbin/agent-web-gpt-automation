@@ -1,0 +1,87 @@
+name: Bug report
+description: Report a reproducible automation, install, or recovery defect
+title: "[Bug]: "
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Agent Web GPT Automation. Remove passwords,
+        OAuth data, browser profiles, private prompts, and host-specific URLs.
+        Report security issues privately through SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Release tag or `git rev-parse HEAD` output
+      placeholder: v1.12.0 or 0123456789abcdef
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows 11
+        - macOS 12 or newer
+        - Other / unsupported
+    validations:
+      required: true
+  - type: input
+    id: dependencies
+    attributes:
+      label: Oracle and DevSpace versions
+      placeholder: Oracle 0.17.1, DevSpace 1.0.4
+    validations:
+      required: true
+  - type: dropdown
+    id: boundary
+    attributes:
+      label: Failing boundary
+      options:
+        - Install / update / rollback / uninstall
+        - DevSpace / tunnel / OAuth
+        - Oracle browser launch or model selection
+        - Pre-submit root or mission guard
+        - Post-submit wait, harvest, or recovery
+        - Comprehensive / Web Multi-GPT
+        - Local Multi-GPT / Ultra Economy Mode
+        - Documentation / packaging
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Include the exact error and whether a web submission may have occurred.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Use placeholders for private paths, hostnames, and mission content.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: State files, doctor summaries, and hashes are useful after secrets are removed.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed passwords, tokens, private prompts, browser data, and private URLs.
+          required: true
+        - label: I did not resubmit an uncertain post-submit run to reproduce the problem.
+          required: true

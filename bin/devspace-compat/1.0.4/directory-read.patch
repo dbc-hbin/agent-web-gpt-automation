@@ -1,0 +1,38 @@
+diff --git a/dist/server.js b/dist/server.js
+--- a/dist/server.js
++++ b/dist/server.js
+@@ -1,6 +1,6 @@
+ import { randomUUID } from "node:crypto";
+ import { readFileSync } from "node:fs";
+-import { access, realpath } from "node:fs/promises";
++import { access, realpath, stat } from "node:fs/promises";
+ import { fileURLToPath } from "node:url";
+ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
+@@ -716,10 +716,20 @@ function createMcpServer(config, workspaces, reviewCheckpoints, processSessions,
+         const startedAt = performance.now();
+         const workspace = workspaces.getWorkspace(workspaceId);
+         const readPath = workspaces.resolveReadPath(workspace, input.path);
+-        const response = await readFileTool({ ...input, path: readPath.absolutePath }, {
+-            cwd: workspace.root,
+-            root: workspace.root,
+-            readRoots: readPath.readRoots,
+-        });
++        let isDirectory = false;
++        try {
++            isDirectory = (await stat(readPath.absolutePath)).isDirectory();
++        }
++        catch { }
++        const response = isDirectory
++            ? await listDirectoryTool({ path: readPath.absolutePath }, {
++                cwd: workspace.root,
++                root: workspace.root,
++            })
++            : await readFileTool({ ...input, path: readPath.absolutePath }, {
++                cwd: workspace.root,
++                root: workspace.root,
++                readRoots: readPath.readRoots,
++            });
+         if (response.isError) {
+             logFailedToolResponse(config, {
+                 tool: toolNames.read,
