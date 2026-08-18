@@ -33,7 +33,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   const stateStore = new StateStore(statePath);
   const slug = `run-${sha(bytes).slice(0,4)}-${sha(runId).slice(0,4)}-${sha(root).slice(0,4)}`;
   const command = options.oracleCommand ?? (process.platform === 'win32' ? ['npx.cmd','--yes','@steipete/oracle@0.17.1'] : ['npx','--yes','@steipete/oracle@0.17.1']);
-  const versionCheck = await execa(command[0], [...command.slice(1), '--version'], { cwd: root, shell: false, reject: false });
+  const versionCheck = await execa(command[0], [...command.slice(1), ...(options.oracleArgs ?? []), '--version'], { cwd: root, shell: false, reject: false });
   if (versionCheck.exitCode !== 0 || !/\b0\.17\.1\b/.test(`${versionCheck.stdout}\n${versionCheck.stderr}`)) throw new Error('ORACLE_VERSION_UNSUPPORTED');
   const outputPath = path.join(dir,'output.md');
   const initial: OracleRunState = { schema:'codex.chatgpt.oracle-run-state/v1', run_id:runId, project_root:root, mission_path:mission, mission_sha256:sha(bytes), mode:'browser', session_authority:'pre_submit', transport_status:'pending', task_outcome:'pending', oracle:{resolved_version:'0.17.1',session_locator:slug,slug,command} };

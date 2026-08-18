@@ -2114,7 +2114,7 @@ async function runOracle(options) {
   const stateStore = new StateStore(statePath);
   const slug = `run-${sha(bytes).slice(0, 4)}-${sha(runId).slice(0, 4)}-${sha(root).slice(0, 4)}`;
   const command = options.oracleCommand ?? (process.platform === "win32" ? ["npx.cmd", "--yes", "@steipete/oracle@0.17.1"] : ["npx", "--yes", "@steipete/oracle@0.17.1"]);
-  const versionCheck = await execa4(command[0], [...command.slice(1), "--version"], { cwd: root, shell: false, reject: false });
+  const versionCheck = await execa4(command[0], [...command.slice(1), ...options.oracleArgs ?? [], "--version"], { cwd: root, shell: false, reject: false });
   if (versionCheck.exitCode !== 0 || !/\b0\.17\.1\b/.test(`${versionCheck.stdout}
 ${versionCheck.stderr}`)) throw new Error("ORACLE_VERSION_UNSUPPORTED");
   const outputPath = path9.join(dir, "output.md");
