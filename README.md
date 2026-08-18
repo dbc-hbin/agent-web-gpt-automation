@@ -36,12 +36,12 @@
 
 `awgpt`는 [Oracle](https://github.com/steipete/oracle) 세션과
 [DevSpace](https://github.com/Waishnav/devspace) 연결을 위한 상태·진단·복구
-구성요소를 제공합니다. 현재 공개 CLI는 신규 web workflow를 제출하지 않으며,
-핵심 목적은 편리한 재시도보다 **중복 제출 방지, 정확한 소유권, 안전한 복구**를
-우선하는 것입니다.
+구성요소를 제공합니다. `run`은 exact root를 먼저 확인한 뒤 Oracle을 한 번
+실행하고, 결과를 receipt/state/output으로 검증합니다. 핵심 목적은 편리한 재시도보다
+**중복 제출 방지, 정확한 소유권, 안전한 복구**를 우선하는 것입니다.
 
 ```text
-통합 목표(run 명령에는 아직 연결되지 않음)
+실행 경로
   └─ exact project root + UTF-8 mission + SHA-256
        └─ Oracle 브라우저 세션 → 웹 ChatGPT
             └─ DevSpace → 승인된 exact root만 접근
@@ -65,9 +65,9 @@
   live/harvest recovery와 fail-closed no-submission evidence 판별
 
 > [!NOTE]
-> `run` 명령은 현재 CLI 자리를 예약한 스켈레톤입니다. 실제 신규 Oracle workflow
-> 제출 명령으로 사용하면 안 됩니다. npm registry 게시도 아직 수행하지 않았으므로,
-> 지금은 아래 소스 설치 경로를 사용하세요.
+> `run`은 신규 Oracle workflow를 실제로 실행합니다. 제출 전 DevSpace exact-root
+> qualification이 실패하면 Oracle 프로세스를 시작하지 않습니다. npm registry
+> publish는 아직 수행하지 않았으므로 아래 소스 설치 경로를 사용하세요.
 
 ## 요구 사항
 
@@ -190,7 +190,10 @@ awgpt auth-recover \
 | `awgpt install` | `install-manifest.json` 파일을 agent home에 WAL/receipt와 함께 설치 |
 | `awgpt update` | 기존 파일을 백업한 뒤 hash 검증과 함께 갱신 |
 | `awgpt rollback` | 마지막 또는 지정 receipt를 사용해 변경되지 않은 파일만 복원 |
-| `awgpt run` | 예약된 스켈레톤; 아직 신규 workflow를 제출하지 않음 |
+| `awgpt run` | exact root/mission을 검증하고 Oracle을 한 번 실행 |
+| `awgpt recover` | 저장된 state의 exact slug를 `live` 관찰 또는 `harvest` 회수 |
+| `awgpt audit` | Oracle을 실행하지 않고 no-submission evidence 확인 |
+| `awgpt stop` | 소유권과 live 상태가 확인된 경우에만 기록된 프로세스 중지 |
 
 각 명령의 실제 옵션은 설치된 버전에서 확인하세요.
 
@@ -200,7 +203,16 @@ awgpt auth-preflight --help
 awgpt auth-recover --help
 awgpt install --help
 awgpt rollback --help
+awgpt run --help
+awgpt recover --help
 ```
+
+`run`은 `--project-root`와 `--mission`을 필수로 받고, `--run-root`, `--manifest`,
+`--oracle-home`, `--oracle-command`, 반복 가능한 `--oracle-arg`, `--devspace-url`을
+선택적으로 받습니다. `--oracle-command`를 생략하면 PATH의 `oracle`을 사용합니다.
+`recover`는 `--state`와 `--action live|harvest`만 받으며 저장된 command/slug 외의
+prompt·restart 인자를 받지 않습니다. 4,800초 audit 시점은 종료 deadline이 아니며,
+elapsed time만으로 kill·lock 해제·재제출을 하지 않습니다.
 
 ## 복구 계약
 
