@@ -5,8 +5,12 @@
     "dist/*.js",
     "dist/*.map",
     "package.json",
-    "skills/*/SKILL.md",
-    "skills/*/agents/openai.yaml",
+    "skills/chatgpt-oracle-runtime/SKILL.md",
+    "skills/chatgpt-question-designer/SKILL.md",
+    "skills/chatgpt-workspace-setup/SKILL.md",
+    "skills/mcp-update-guard/SKILL.md",
+    "skills/ultra-economy-mode/SKILL.md",
+    "skills/web-multi-gpt/SKILL.md",
     "contracts/orchestrator/phase5-recovery-v1.json"
   ]
 }
