@@ -70,8 +70,27 @@ export async function stopRecorded(statePath:string): Promise<void> {
   if (!['live','submitted_unknown'].includes(state.session_authority)) throw new Error('STOP_UNSAFE_AUTHORITY');
   const registry = new ProcessRegistry(path.join(path.dirname(path.resolve(statePath)), 'processes.json'));
   const records = (await registry.list()).filter(r => r.run_id === state.run_id && path.resolve(r.project_root ?? '') === path.resolve(state.project_root) && r.state === 'running');
-  if (records.length !== 1) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
-  await terminatePersistedProcess(records[0]);
+  let record = records[0];
+  // The registry can be lost while the run state remains durable.  In that
+  // case recover the persisted PID, but only after proving its live command
+  // identity (and process start time on POSIX) so a recycled PID is never
+  // terminated accidentally.
+  if (records.length === 0 && state.process) {
+    const p = state.process;
+    let startedAt = new Date().toISOString();
+    if (process.platform !== 'win32') {
+      const probe = await execa('ps', ['-p', String(p.pid), '-o', 'lstart='], { reject: false });
+      if (probe.exitCode !== 0 || !probe.stdout.trim()) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
+      const observed = Date.parse(probe.stdout.trim());
+      if (!Number.isFinite(observed)) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
+      startedAt = new Date(observed).toISOString();
+    }
+    record = { id: state.run_id, pid: p.pid, command: p.command, args: p.args,
+      cwd: state.project_root, project_root: state.project_root, run_id: state.run_id,
+      started_at: startedAt, state: 'running' };
+  }
+  if (!record || records.length > 1) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
+  await terminatePersistedProcess(record);
   const settled = { ...state, session_authority: 'settled' as const, transport_status: 'failed' as const };
   await new StateStore(path.resolve(statePath)).write(settled, { explicitSettle: true });
 }
