@@ -8,7 +8,7 @@ import { parseTaskOutcome, OracleRunStateSchema, OracleManifestSchema, receiptSh
 import { StateStore } from '../state/store.js';
 
 export interface DevSpaceQualifier { qualify(root: string, manifest?: string): Promise<{ ok: boolean; reason?: string }> }
-export interface RunOptions { projectRoot: string; missionPath: string; runRoot?: string; oracleCommand?: string[]; oracleArgs?: string[]; manifestPath?: string; localGate?: string[]; oracleHome?: string; devspace?: DevSpaceQualifier; runId?: string }
+export interface RunOptions { projectRoot: string; missionPath: string; runRoot?: string; oracleCommand?: string[]; oracleArgs?: string[]; manifestPath?: string; localGate?: string[]; oracleHome?: string; devspace?: DevSpaceQualifier; runId?: string; dryRun?: boolean }
 export interface RunResult { statePath: string; state: OracleRunState }
 const sha = (b: Buffer|string) => createHash('sha256').update(b).digest('hex');
 async function exactDir(p: string) { const s = await lstat(p).catch(() => undefined); if (!s?.isDirectory() || s.isSymbolicLink()) throw new Error('PROJECT_ROOT_INVALID'); return await realpath(p); }
@@ -32,10 +32,18 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   const workflowPath = path.join(dir,'workflow.json');
   const stateStore = new StateStore(statePath);
   const slug = `run-${sha(bytes).slice(0,4)}-${sha(runId).slice(0,4)}-${sha(root).slice(0,4)}`;
-  const command = options.oracleCommand ?? (process.platform === 'win32' ? ['npx.cmd','--yes','@steipete/oracle@0.17.1'] : ['npx','--yes','@steipete/oracle@0.17.1']);
-  const versionCheck = await execa(command[0], [...command.slice(1), ...(options.oracleArgs ?? []), '--version'], { cwd: root, shell: false, reject: false });
-  if (versionCheck.exitCode !== 0 || !/\b0\.17\.1\b/.test(`${versionCheck.stdout}\n${versionCheck.stderr}`)) throw new Error('ORACLE_VERSION_UNSUPPORTED');
+  const defaultCommand = process.platform === 'win32' ? ['npx.cmd','--yes','@steipete/oracle@0.17.1'] : ['npx','--yes','@steipete/oracle@0.17.1'];
+  const command = manifest?.oracle_command ?? options.oracleCommand ?? defaultCommand;
+  if (manifest?.oracle_command && options.oracleCommand && JSON.stringify(manifest.oracle_command) !== JSON.stringify(options.oracleCommand)) throw new Error('ORACLE_COMMAND_CONFLICT');
+  if (manifest?.oracle_args && options.oracleArgs && JSON.stringify(manifest.oracle_args) !== JSON.stringify(options.oracleArgs)) throw new Error('ORACLE_ARGS_CONFLICT');
+  const oracleArgs = manifest?.oracle_args ?? options.oracleArgs ?? [];
+  const versionCheck = await execa(command[0], [...command.slice(1), ...oracleArgs, '--version'], { cwd: root, shell: false, reject: false });
+  const version = `${versionCheck.stdout}\n${versionCheck.stderr}`.trim();
+  if (versionCheck.exitCode !== 0 || !/(^|\n|\s)v?0\.17\.1(?:\s|$)/.test(version) || /0\.17\.1-(?:beta|rc|alpha)/i.test(version)) throw new Error('ORACLE_VERSION_UNSUPPORTED');
   const outputPath = path.join(dir,'output.md');
+  if (manifest?.copy_profile) { const s=await lstat(manifest.copy_profile).catch(()=>undefined); if (!s || s.isSymbolicLink() || !s.isDirectory()) throw new Error('COPY_PROFILE_INVALID'); }
+  if (manifest?.attachments) for (const attachment of manifest.attachments) { const s=await lstat(attachment).catch(()=>undefined); if (!s || s.isSymbolicLink() || !s.isFile()) throw new Error('ATTACHMENT_INVALID'); }
+  if (options.dryRun) return { statePath, state: initial };
   const initial: OracleRunState = { schema:'codex.chatgpt.oracle-run-state/v1', run_id:runId, project_root:root, mission_path:mission, mission_sha256:sha(bytes), mission:{path:mission,sha256:sha(bytes)}, mode:'browser', session_authority:'pre_submit', transport_status:'pending', task_outcome:'pending', oracle:{resolved_version:'0.17.1',session_locator:slug,slug,command} };
   const lock = new LockManager({ projectRoot: root }); const release = await lock.acquire();
   let retainLock = false;
@@ -53,11 +61,14 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
     if (options.devspace) { const q=await options.devspace.qualify(root, options.manifestPath); if (!q.ok) return await preSubmitFailure(q.reason ?? 'QUALIFICATION_FAILED'); }
     if (options.localGate) { const gate=await execa(options.localGate[0], options.localGate.slice(1),{cwd:root,shell:false,reject:false}); if (gate.exitCode!==0) return await preSubmitFailure('LOCAL_GATE_FAILED'); }
     const args=[...command.slice(1), '--engine','browser','--slug',slug,'--prompt',bytes.toString('utf8'),'--write-output',outputPath,
-      ...(manifest?.model ? ['--model',manifest.model] : []), ...(manifest?.model_strategy ? ['--model-strategy',manifest.model_strategy] : []),
-      ...(manifest?.research ? ['--research',manifest.research] : []), ...(manifest?.archive ? ['--archive',manifest.archive] : []),
-      ...(manifest?.copy_profile ? ['--copy-profile',manifest.copy_profile] : []), ...(manifest?.attachments ?? []).flatMap((a:string)=>['--attachment',a]), ...(options.oracleArgs??[])];
+      ...(manifest?.model ? ['--model',manifest.model] : []),
+      ...(manifest?.model_strategy ? ['--browser-model-strategy',manifest.model_strategy] : []),
+      ...(manifest?.research ? ['--browser-research',manifest.research] : []), ...(manifest?.archive ? ['--browser-archive',manifest.archive] : []),
+      ...(manifest?.attachments ?? []).flatMap((a:string)=>['--attachment',a]), ...(manifest?.attachments ? ['--file', ...manifest.attachments] : []),
+      ...(manifest?.copy_profile ? ['--copy-profile',manifest.copy_profile] : []), ...oracleArgs];
     const child=execa(command[0],args,{cwd:root,shell:false,reject:false,env:{...process.env, ...(options.oracleHome?{ORACLE_HOME:options.oracleHome}:{})}});
-    await stateStore.write({...initial, session_authority:'submitted_unknown', transport_status:'pending', process: child.pid ? { pid: child.pid, command: command[0], args } : undefined }, { explicitSettle: false });
+    const startedAt = new Date().toISOString();
+    await stateStore.write({...initial, session_authority:'submitted_unknown', transport_status:'pending', process: child.pid ? { pid: child.pid, command: command[0], args, cwd: root, started_at: startedAt } : undefined }, { explicitSettle: false });
     const registry = new ProcessRegistry(path.join(dir,'processes.json'));
     if (child.pid) await registry.upsert({id:runId,pid:child.pid,command:command[0],args,cwd:root,project_root:root,run_id:runId,started_at:new Date().toISOString(),state:'running'});
     const out=await child;
@@ -90,7 +101,8 @@ export async function stopRecorded(statePath:string): Promise<void> {
   // terminated accidentally.
   if (records.length === 0 && state.process) {
     const p = state.process;
-    let startedAt = new Date().toISOString();
+    if (!p.started_at || !p.cwd) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
+    const startedAt = p.started_at;
     if (process.platform !== 'win32') {
       const probe = await execa('ps', ['-p', String(p.pid), '-o', 'lstart='], { reject: false });
       if (probe.exitCode !== 0 || !probe.stdout.trim()) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
@@ -99,7 +111,7 @@ export async function stopRecorded(statePath:string): Promise<void> {
       startedAt = new Date(observed).toISOString();
     }
     record = { id: state.run_id, pid: p.pid, command: p.command, args: p.args,
-      cwd: state.project_root, project_root: state.project_root, run_id: state.run_id,
+      cwd: p.cwd, project_root: state.project_root, run_id: state.run_id,
       started_at: startedAt, state: 'running' };
   }
   if (!record || records.length > 1) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');

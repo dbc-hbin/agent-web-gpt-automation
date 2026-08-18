@@ -265,7 +265,7 @@ export const OracleRunStateSchema = z.object({
   session_authority: SessionAuthority,
   transport_status: z.enum(['complete', 'failed', 'pending']),
   task_outcome: TaskOutcome,
-  process: z.object({ pid: z.number().int().positive(), command: z.string(), args: z.array(z.string()) }).strict().optional(),
+  process: z.object({ pid: z.number().int().positive(), command: z.string(), args: z.array(z.string()), cwd: z.string().optional(), started_at: z.string().datetime().optional() }).strict().optional(),
   oracle: z.object({
     resolved_version: z.string(),
     session_locator: z.string(),
