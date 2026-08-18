@@ -12,6 +12,14 @@ import { proveNoSubmission } from '../core/forensics/no-submission.js';
 import { createHttpDevSpaceClient } from '../core/devspace/http-client.js';
 import { runLocalGate } from '../core/orchestrator/gate-runner.js';
 import { createRequire } from 'node:module';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { setupWorkspace } from '../core/workspace/commands.js';
+const execFileAsync = promisify(execFile);
+const localCommandRunner = { run: async (command: string, args: string[]) => {
+  try { const result = await execFileAsync(command, args, { encoding: 'utf8' }); return { code: 0, stdout: result.stdout, stderr: result.stderr }; }
+  catch (error: any) { return { code: typeof error?.code === 'number' ? error.code : 1, stdout: error?.stdout ?? '', stderr: error?.stderr ?? error?.message ?? String(error) }; }
+} };
 
 const require = createRequire(import.meta.url);
 let packageMetadata: { version?: string } = {};
@@ -96,6 +104,21 @@ export function createCLI(): Command {
       if (report.status === 'FAIL') process.exitCode = 1;
       else if (report.status === 'BLOCKED') process.exitCode = 2;
     });
+
+  const workspace = program.command('workspace').description('Configure and inspect the exact DevSpace workspace');
+  for (const action of ['setup', 'doctor'] as const) {
+    workspace.command(action)
+      .description(action === 'setup' ? 'Preview workspace commands (use --apply to execute)' : 'Run workspace checks')
+      .option('--root <path>', 'exact project root', process.cwd())
+      .option('--apply', 'execute commands; preview is the default')
+      .action(async options => {
+        try {
+          const result = await setupWorkspace({ root: options.root, apply: Boolean(options.apply), runner: localCommandRunner });
+          console.log(JSON.stringify(result, null, 2));
+          if (result.status === 'BLOCKED') process.exitCode = 2;
+        } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }
+      });
+  }
 
   program
     .command('auth-preflight')
