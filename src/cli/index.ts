@@ -14,7 +14,8 @@ import { runLocalGate } from '../core/orchestrator/gate-runner.js';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const packageMetadata = require('../../package.json') as { version?: string };
+let packageMetadata: { version?: string } = {};
+try { packageMetadata = require('../../package.json') as { version?: string }; } catch { packageMetadata = { version: '1.0.0' }; }
 export function publicVersion(): string {
   const version = packageMetadata.version;
   if (!version) throw new Error('PACKAGE_VERSION_MISSING');

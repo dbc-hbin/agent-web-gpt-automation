@@ -1201,6 +1201,13 @@ var InstallManifestSchema = z4.object({
   version: z4.string().min(1),
   include: z4.array(z4.string().min(1))
 }).passthrough();
+async function readInstallManifest(sourceRoot) {
+  const root = path5.resolve(sourceRoot);
+  return InstallManifestSchema.parse(JSON.parse(await readFile5(path5.join(root, "install-manifest.json"), "utf8")));
+}
+async function manifestVersion(sourceRoot) {
+  return (await readInstallManifest(sourceRoot)).version;
+}
 var InstallRecordSchema = z4.object({
   path: z4.string().min(1),
   action: z4.enum(["created", "overwritten"]),
@@ -1278,7 +1285,7 @@ async function expandPattern(root, pattern) {
 }
 async function manifestFiles(sourceRoot) {
   const root = path5.resolve(sourceRoot);
-  const manifest = InstallManifestSchema.parse(JSON.parse(await readFile5(path5.join(root, "install-manifest.json"), "utf8")));
+  const manifest = await readInstallManifest(root);
   const files = /* @__PURE__ */ new Set();
   for (const pattern of manifest.include) {
     for (const relative5 of await expandPattern(root, pattern)) {
@@ -1965,7 +1972,7 @@ async function recoverChatGptLogin(options) {
 
 // src/cli/index.ts
 import * as os4 from "node:os";
-import * as path11 from "node:path";
+import * as path12 from "node:path";
 
 // src/core/run/runtime.ts
 import { createHash as createHash5, randomUUID as randomUUID5 } from "node:crypto";
@@ -2088,11 +2095,12 @@ async function runOracle(options) {
   if (rel === ".." || rel.startsWith(`..${path9.sep}`) || path9.isAbsolute(rel)) throw new Error("MISSION_ROOT_MISMATCH");
   const bytes = await exactFile(mission);
   const runId = options.runId ?? `run-${randomUUID5()}`;
+  let manifest;
   if (options.manifestPath) {
     const mp = path9.resolve(options.manifestPath);
     const ms = await lstat5(mp).catch(() => void 0);
     if (!ms?.isFile() || ms.isSymbolicLink()) throw new Error("MANIFEST_PATH_INVALID");
-    const manifest = OracleManifestSchema.parse(JSON.parse(await readFile9(await realpath(mp), "utf8")));
+    manifest = OracleManifestSchema.parse(JSON.parse(await readFile9(await realpath(mp), "utf8")));
     if (path9.resolve(manifest.project_root) !== root || path9.resolve(manifest.mission_path) !== mission) throw new Error("MANIFEST_BINDING_MISMATCH");
   }
   const dir = path9.resolve(options.runRoot ?? path9.join(root, ".awgpt", runId));
@@ -2105,7 +2113,10 @@ async function runOracle(options) {
   const workflowPath = path9.join(dir, "workflow.json");
   const stateStore = new StateStore(statePath);
   const slug = `run-${sha(bytes).slice(0, 4)}-${sha(runId).slice(0, 4)}-${sha(root).slice(0, 4)}`;
-  const command = options.oracleCommand ?? ["oracle"];
+  const command = options.oracleCommand ?? (process.platform === "win32" ? ["npx.cmd", "--yes", "@steipete/oracle@0.17.1"] : ["npx", "--yes", "@steipete/oracle@0.17.1"]);
+  const versionCheck = await execa4(command[0], [...command.slice(1), "--version"], { cwd: root, shell: false, reject: false });
+  if (versionCheck.exitCode !== 0 || !/\b0\.17\.1\b/.test(`${versionCheck.stdout}
+${versionCheck.stderr}`)) throw new Error("ORACLE_VERSION_UNSUPPORTED");
   const outputPath = path9.join(dir, "output.md");
   const initial = { schema: "codex.chatgpt.oracle-run-state/v1", run_id: runId, project_root: root, mission_path: mission, mission_sha256: sha(bytes), mode: "browser", session_authority: "pre_submit", transport_status: "pending", task_outcome: "pending", oracle: { resolved_version: "0.17.1", session_locator: slug, slug, command } };
   const lock4 = new LockManager({ projectRoot: root });
@@ -2115,19 +2126,39 @@ async function runOracle(options) {
     await stateStore.write(initial);
     const wfBase = { schema: "codex.chatgpt.oracle-workflow/v1", run_id: runId, project_root: root, mission_path: mission, profile: "default", stage: "plan", session_authority: "pre_submit", task_outcome: "pending", revision: 0, receipts: [] };
     await new StateStore(workflowPath).write(wfBase);
+    const preSubmitFailure = async (reason) => {
+      const failed = { ...initial, session_authority: "settled", transport_status: "failed", task_outcome: "NOT_EXECUTED" };
+      const receipt2 = { receipt_id: randomUUID5(), run_id: runId, stage: "plan", status: "failed", input_sha256: sha(bytes), output_sha256: sha(reason), previous_receipt_sha256: null, next_stage: "attention_required", prologue: { project_root: root, mission_sha256: sha(bytes), profile: "default", semantic_revision: 0 }, external_actions: [{ kind: "devspace", status: "failed" }], recovery: { session_authority: "settled", attempt: 0, exact_slug: slug } };
+      await new StateStore(workflowPath).write({ ...wfBase, stage: "attention_required", session_authority: "settled", task_outcome: "NOT_EXECUTED", receipts: [receipt2] }, { explicitSettle: true });
+      await stateStore.write(failed, { explicitSettle: true });
+      return { statePath, state: failed };
+    };
     if (options.devspace) {
       const q = await options.devspace.qualify(root, options.manifestPath);
-      if (!q.ok) {
-        const failed = { ...initial, session_authority: "settled", transport_status: "failed" };
-        await stateStore.write(failed, { explicitSettle: true });
-        return { statePath, state: failed };
-      }
+      if (!q.ok) return await preSubmitFailure(q.reason ?? "QUALIFICATION_FAILED");
     }
     if (options.localGate) {
       const gate = await execa4(options.localGate[0], options.localGate.slice(1), { cwd: root, shell: false, reject: false });
-      if (gate.exitCode !== 0) throw new Error("LOCAL_GATE_FAILED");
+      if (gate.exitCode !== 0) return await preSubmitFailure("LOCAL_GATE_FAILED");
     }
-    const args = [...command.slice(1), "--engine", "browser", "--slug", slug, "--prompt", bytes.toString("utf8"), "--write-output", outputPath, ...options.oracleArgs ?? []];
+    const args = [
+      ...command.slice(1),
+      "--engine",
+      "browser",
+      "--slug",
+      slug,
+      "--prompt",
+      bytes.toString("utf8"),
+      "--write-output",
+      outputPath,
+      ...manifest?.model ? ["--model", manifest.model] : [],
+      ...manifest?.model_strategy ? ["--model-strategy", manifest.model_strategy] : [],
+      ...manifest?.research ? ["--research", manifest.research] : [],
+      ...manifest?.archive ? ["--archive", manifest.archive] : [],
+      ...manifest?.copy_profile ? ["--copy-profile", manifest.copy_profile] : [],
+      ...(manifest?.attachments ?? []).flatMap((a) => ["--attachment", a]),
+      ...options.oracleArgs ?? []
+    ];
     const child = execa4(command[0], args, { cwd: root, shell: false, reject: false, env: { ...process.env, ...options.oracleHome ? { ORACLE_HOME: options.oracleHome } : {} } });
     await stateStore.write({ ...initial, session_authority: "submitted_unknown", transport_status: "pending", process: child.pid ? { pid: child.pid, command: command[0], args } : void 0 }, { explicitSettle: false });
     const registry = new ProcessRegistry(path9.join(dir, "processes.json"));
@@ -2174,8 +2205,31 @@ async function stopRecorded(statePath) {
   if (!["live", "submitted_unknown"].includes(state.session_authority)) throw new Error("STOP_UNSAFE_AUTHORITY");
   const registry = new ProcessRegistry(path9.join(path9.dirname(path9.resolve(statePath)), "processes.json"));
   const records = (await registry.list()).filter((r) => r.run_id === state.run_id && path9.resolve(r.project_root ?? "") === path9.resolve(state.project_root) && r.state === "running");
-  if (records.length !== 1) throw new Error("STOP_OWNERSHIP_AMBIGUOUS");
-  await terminatePersistedProcess(records[0]);
+  let record = records[0];
+  if (records.length === 0 && state.process) {
+    const p = state.process;
+    let startedAt = (/* @__PURE__ */ new Date()).toISOString();
+    if (process.platform !== "win32") {
+      const probe = await execa4("ps", ["-p", String(p.pid), "-o", "lstart="], { reject: false });
+      if (probe.exitCode !== 0 || !probe.stdout.trim()) throw new Error("STOP_OWNERSHIP_AMBIGUOUS");
+      const observed = Date.parse(probe.stdout.trim());
+      if (!Number.isFinite(observed)) throw new Error("STOP_OWNERSHIP_AMBIGUOUS");
+      startedAt = new Date(observed).toISOString();
+    }
+    record = {
+      id: state.run_id,
+      pid: p.pid,
+      command: p.command,
+      args: p.args,
+      cwd: state.project_root,
+      project_root: state.project_root,
+      run_id: state.run_id,
+      started_at: startedAt,
+      state: "running"
+    };
+  }
+  if (!record || records.length > 1) throw new Error("STOP_OWNERSHIP_AMBIGUOUS");
+  await terminatePersistedProcess(record);
   const settled = { ...state, session_authority: "settled", transport_status: "failed" };
   await new StateStore(path9.resolve(statePath)).write(settled, { explicitSettle: true });
 }
@@ -2342,10 +2396,117 @@ function createHttpDevSpaceClient(endpoint, fetcher = fetch) {
   return { open_workspace: (args) => call("open_workspace", args), list_directory: (args) => call("ls", args) };
 }
 
+// src/core/orchestrator/gate-runner.ts
+import { createHash as createHash7 } from "node:crypto";
+import * as path11 from "node:path";
+import { lstat as lstat7, realpath as realpath2 } from "node:fs/promises";
+import { execa as execa5 } from "execa";
+function sha2563(value) {
+  return createHash7("sha256").update(value, "utf8").digest("hex");
+}
+function environmentHash(env) {
+  const canonical = Object.keys(env).sort().map((key) => `${key}=${env[key] ?? ""}`).join("\n");
+  return sha2563(canonical);
+}
+async function runLocalGate(request) {
+  if (!Array.isArray(request.argv) || request.argv.length === 0 || request.argv.some((item) => typeof item !== "string")) {
+    throw new Error("GATE_ARGV_INVALID");
+  }
+  const suppliedRoot = path11.resolve(request.projectRoot);
+  let cwd;
+  try {
+    const metadata = await lstat7(suppliedRoot);
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("GATE_PROJECT_ROOT_INVALID");
+    cwd = await realpath2(suppliedRoot);
+  } catch {
+    throw new Error("GATE_PROJECT_ROOT_INVALID");
+  }
+  const mergedEnv = { ...process.env, ...request.env ?? {} };
+  const started = Date.now();
+  try {
+    const result = await execa5(request.argv[0], request.argv.slice(1), {
+      cwd,
+      env: mergedEnv,
+      shell: false,
+      reject: false,
+      timeout: request.timeoutMs,
+      stripFinalNewline: false
+    });
+    const stdout = result.stdout ?? "";
+    const stderr = result.stderr ?? "";
+    return {
+      ok: result.exitCode === 0,
+      argv: [...request.argv],
+      cwd,
+      exit_code: result.exitCode ?? null,
+      signal: result.signal ?? null,
+      stdout,
+      stderr,
+      output_sha256: sha2563(`${stdout}\0${stderr}`),
+      env_sha256: environmentHash(mergedEnv),
+      duration_ms: Date.now() - started
+    };
+  } catch (error) {
+    const execaError = error;
+    const stdout = String(execaError.stdout ?? "");
+    const stderr = String(execaError.stderr ?? "");
+    return {
+      ok: false,
+      argv: [...request.argv],
+      cwd,
+      exit_code: typeof execaError.exitCode === "number" ? execaError.exitCode : null,
+      signal: execaError.signal ?? null,
+      stdout,
+      stderr,
+      output_sha256: sha2563(`${stdout}\0${stderr}`),
+      env_sha256: environmentHash(mergedEnv),
+      duration_ms: Date.now() - started
+    };
+  }
+}
+var runGate = runLocalGate;
+
 // src/cli/index.ts
+import { createRequire } from "node:module";
+var require2 = createRequire(import.meta.url);
+var packageMetadata = {};
+try {
+  packageMetadata = require2("../../package.json");
+} catch {
+  packageMetadata = { version: "1.0.0" };
+}
+function publicVersion() {
+  const version = packageMetadata.version;
+  if (!version) throw new Error("PACKAGE_VERSION_MISSING");
+  return version;
+}
+function publicArgv(argv = process.argv) {
+  return argv.slice(2);
+}
 function createCLI() {
   const program2 = new Command();
-  program2.name("awgpt").description("Guarded, recoverable web GPT automation").version("1.0.0");
+  program2.name("awgpt").description("Guarded, recoverable web GPT automation").version(publicVersion());
+  program2.command("local-gate").description("Run a deterministic local gate without a shell").requiredOption("--project-root <path>", "exact project root").requiredOption("--argv <value...>", "executable and arguments").option("--env <key=value...>", "environment additions").option("--timeout-ms <milliseconds>", "gate timeout").action(async (options) => {
+    try {
+      const env = {};
+      for (const item of options.env ?? []) {
+        const separator = item.indexOf("=");
+        if (separator <= 0) throw new Error("GATE_ENV_INVALID");
+        env[item.slice(0, separator)] = item.slice(separator + 1);
+      }
+      const result = await runLocalGate({
+        argv: options.argv,
+        projectRoot: options.projectRoot,
+        env,
+        timeoutMs: options.timeoutMs === void 0 ? void 0 : Number(options.timeoutMs)
+      });
+      console.log(JSON.stringify({ schema: "codex.chatgpt.local-gate/v1", ...result }, null, 2));
+      if (!result.ok) process.exitCode = 2;
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
+  });
   program2.command("doctor").description("Check environment health").option("--project-root <path>", "exact project root", process.cwd()).option("--copy-profile <path>", "manual-login profile seed").option("--devspace-url <url>", "local DevSpace MCP probe URL").option("--oracle-home <path>", "isolated Oracle home").option("--state <path...>", "specific Oracle state files to validate").option("--recover", "emit the single safe next recovery action").option("--open-profile-login", "open a generic ChatGPT login in a new isolated profile").action(async (options) => {
     if (options.openProfileLogin) {
       const target = await prepareProfileLogin();
@@ -2369,7 +2530,7 @@ function createCLI() {
     if (report.status === "FAIL") process.exitCode = 1;
     else if (report.status === "BLOCKED") process.exitCode = 2;
   });
-  program2.command("auth-preflight").description("Validate ChatGPT authentication and required composer DOM without submitting").requiredOption("--copy-profile <path>", "manual-login profile seed").option("--oracle-home <path>", "isolated Oracle home", path11.join(os4.homedir(), ".oracle")).option("--chrome-path <path>", "Chrome executable override").action(async (options) => {
+  program2.command("auth-preflight").description("Validate ChatGPT authentication and required composer DOM without submitting").requiredOption("--copy-profile <path>", "manual-login profile seed").option("--oracle-home <path>", "isolated Oracle home", path12.join(os4.homedir(), ".oracle")).option("--chrome-path <path>", "Chrome executable override").action(async (options) => {
     const manager = new ProfileManager({ sourceProfilePath: options.copyProfile }, options.oracleHome);
     const id = `preflight-${Date.now()}`;
     const copied = await manager.createSession(id);
@@ -2381,7 +2542,7 @@ function createCLI() {
       await manager.removeProfile(id);
     }
   });
-  program2.command("auth-recover").description("Recover the isolated login from ChatGPT cookies in the main Chrome profile").requiredOption("--copy-profile <path>", "manual-login profile seed to repair").option("--chrome-user-data <path>", "main Chrome user-data root").option("--chrome-profile <name>", "Chrome profile directory, such as Default or Profile 1").option("--oracle-home <path>", "isolated Oracle home", path11.join(os4.homedir(), ".oracle")).option("--chrome-path <path>", "Chrome executable override").action(async (options) => {
+  program2.command("auth-recover").description("Recover the isolated login from ChatGPT cookies in the main Chrome profile").requiredOption("--copy-profile <path>", "manual-login profile seed to repair").option("--chrome-user-data <path>", "main Chrome user-data root").option("--chrome-profile <name>", "Chrome profile directory, such as Default or Profile 1").option("--oracle-home <path>", "isolated Oracle home", path12.join(os4.homedir(), ".oracle")).option("--chrome-path <path>", "Chrome executable override").action(async (options) => {
     try {
       const result = await recoverChatGptLogin({
         seedPath: options.copyProfile,
@@ -2406,7 +2567,7 @@ function createCLI() {
     }
   });
   for (const action of ["install", "update"]) {
-    program2.command(action).description(`${action} repository-managed Agent Web GPT files with a receipt`).option("--source <path>", "repository source root (defaults to the installed package)").option("--agent-home <path>", "installation root", path11.join(os4.homedir(), ".codex")).action(async (options) => {
+    program2.command(action).description(`${action} repository-managed Agent Web GPT files with a receipt`).option("--source <path>", "repository source root (defaults to the installed package)").option("--agent-home <path>", "installation root", path12.join(os4.homedir(), ".codex")).action(async (options) => {
       try {
         const result = await installOrUpdate(action, options.source ?? resolvePackageSource(), options.agentHome);
         console.log(JSON.stringify(result, null, 2));
@@ -2416,7 +2577,7 @@ function createCLI() {
       }
     });
   }
-  program2.command("rollback").description("Rollback the latest receipt without overwriting modified files").option("--agent-home <path>", "installation root", path11.join(os4.homedir(), ".codex")).option("--receipt <path>", "specific owned receipt").action(async (options) => {
+  program2.command("rollback").description("Rollback the latest receipt without overwriting modified files").option("--agent-home <path>", "installation root", path12.join(os4.homedir(), ".codex")).option("--receipt <path>", "specific owned receipt").action(async (options) => {
     try {
       const result = await rollbackInstall(options.agentHome, options.receipt);
       console.log(JSON.stringify(result, null, 2));
@@ -2587,76 +2748,6 @@ var StageGate = class {
     return receipt;
   }
 };
-
-// src/core/orchestrator/gate-runner.ts
-import { createHash as createHash7 } from "node:crypto";
-import * as path12 from "node:path";
-import { lstat as lstat7, realpath as realpath2 } from "node:fs/promises";
-import { execa as execa5 } from "execa";
-function sha2563(value) {
-  return createHash7("sha256").update(value, "utf8").digest("hex");
-}
-function environmentHash(env) {
-  const canonical = Object.keys(env).sort().map((key) => `${key}=${env[key] ?? ""}`).join("\n");
-  return sha2563(canonical);
-}
-async function runLocalGate(request) {
-  if (!Array.isArray(request.argv) || request.argv.length === 0 || request.argv.some((item) => typeof item !== "string")) {
-    throw new Error("GATE_ARGV_INVALID");
-  }
-  const suppliedRoot = path12.resolve(request.projectRoot);
-  let cwd;
-  try {
-    const metadata = await lstat7(suppliedRoot);
-    if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("GATE_PROJECT_ROOT_INVALID");
-    cwd = await realpath2(suppliedRoot);
-  } catch {
-    throw new Error("GATE_PROJECT_ROOT_INVALID");
-  }
-  const mergedEnv = { ...process.env, ...request.env ?? {} };
-  const started = Date.now();
-  try {
-    const result = await execa5(request.argv[0], request.argv.slice(1), {
-      cwd,
-      env: mergedEnv,
-      shell: false,
-      reject: false,
-      timeout: request.timeoutMs,
-      stripFinalNewline: false
-    });
-    const stdout = result.stdout ?? "";
-    const stderr = result.stderr ?? "";
-    return {
-      ok: result.exitCode === 0,
-      argv: [...request.argv],
-      cwd,
-      exit_code: result.exitCode ?? null,
-      signal: result.signal ?? null,
-      stdout,
-      stderr,
-      output_sha256: sha2563(`${stdout}\0${stderr}`),
-      env_sha256: environmentHash(mergedEnv),
-      duration_ms: Date.now() - started
-    };
-  } catch (error) {
-    const execaError = error;
-    const stdout = String(execaError.stdout ?? "");
-    const stderr = String(execaError.stderr ?? "");
-    return {
-      ok: false,
-      argv: [...request.argv],
-      cwd,
-      exit_code: typeof execaError.exitCode === "number" ? execaError.exitCode : null,
-      signal: execaError.signal ?? null,
-      stdout,
-      stderr,
-      output_sha256: sha2563(`${stdout}\0${stderr}`),
-      env_sha256: environmentHash(mergedEnv),
-      duration_ms: Date.now() - started
-    };
-  }
-}
-var runGate = runLocalGate;
 
 // src/core/process/supervisor.ts
 import { execa as execa6 } from "execa";
@@ -2912,6 +3003,7 @@ export {
   isValidTransition,
   launchProfileLogin,
   manifestFiles,
+  manifestVersion,
   multiConfig,
   normalizeOracleSessionAuthority,
   packContext,
@@ -2922,7 +3014,10 @@ export {
   prepareProfileLogin,
   probeBrowserAuth,
   proveNoSubmission,
+  publicArgv,
+  publicVersion,
   qualifyExactProjectRoot,
+  readInstallManifest,
   receiptSha256,
   recoverChatGptLogin,
   recoverPendingInstalls,
