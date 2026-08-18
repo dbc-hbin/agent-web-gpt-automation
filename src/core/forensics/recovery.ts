@@ -23,6 +23,17 @@ async function assertSafeOutputPath(target: string, root: string): Promise<void>
   const existing = await lstat(absolute).catch(() => undefined);
   if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error('RECOVERY_OUTPUT_INVALID');
 }
+async function captureRunDirectory(dir: string) {
+  const stat = await lstat(dir).catch(() => undefined);
+  if (!stat?.isDirectory() || stat.isSymbolicLink()) throw new Error('RECOVERY_RUN_DIRECTORY_INVALID');
+  return { dev: stat.dev, ino: stat.ino, real: await realpath(dir) };
+}
+async function assertRunDirectory(dir: string, expected: { dev: number; ino: number; real: string }) {
+  const stat = await lstat(dir).catch(() => undefined);
+  if (!stat?.isDirectory() || stat.isSymbolicLink() || stat.dev !== expected.dev || stat.ino !== expected.ino) throw new Error('RECOVERY_RUN_DIRECTORY_CHANGED');
+  if (await realpath(dir).catch(() => '') !== expected.real) throw new Error('RECOVERY_RUN_DIRECTORY_CHANGED');
+  await assertSafeOutputPath(path.join(dir, 'recovery-check.md'), dir);
+}
 
 export interface ExactRecoveryPlan {
   run_id: string;
@@ -133,6 +144,7 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
   else throw new Error('RECOVERY_MISSION_INVALID');
   const runDir = path.dirname(plan.output_path);
   await mkdir(runDir, { recursive: true });
+  const runDirIdentity = await captureRunDirectory(runDir);
   await assertSafeOutputPath(plan.output_path, runDir);
   await assertSafeOutputPath(plan.authoritative_output_path, runDir);
   // Validate the persisted run identity before any dead-owner takeover.  The
@@ -175,10 +187,12 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
     stdin: 'ignore',
     env: { ...process.env },
   });
+  await assertRunDirectory(runDir, runDirIdentity);
   await Promise.all([
     writeFile(`${stdoutPath}.tmp`, result.stdout, 'utf8').then(() => rename(`${stdoutPath}.tmp`, stdoutPath)),
     writeFile(`${stderrPath}.tmp`, result.stderr, 'utf8').then(() => rename(`${stderrPath}.tmp`, stderrPath)),
   ]);
+  await assertRunDirectory(runDir, runDirIdentity);
   const candidateStat = await lstat(plan.output_path).catch(() => undefined);
   if (candidateStat && (!candidateStat.isFile() || candidateStat.isSymbolicLink())) throw new Error('RECOVERY_OUTPUT_INVALID');
   const output = candidateStat ? await readFile(plan.output_path) : Buffer.alloc(0);
@@ -231,10 +245,12 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
       }
     }
     if (semanticOutput) {
+      await assertRunDirectory(runDir, runDirIdentity);
       const destinationStat = await lstat(plan.authoritative_output_path).catch(() => undefined);
       if (destinationStat && (!destinationStat.isFile() || destinationStat.isSymbolicLink())) throw new Error('RECOVERY_OUTPUT_INVALID');
       if (destinationStat) throw new Error('RECOVERY_OUTPUT_ALREADY_AUTHORITATIVE');
       await rename(plan.output_path, plan.authoritative_output_path);
+      await assertRunDirectory(runDir, runDirIdentity);
       authority = 'settled';
       status = ['EXECUTED', 'legacy_unclassified'].includes(taskOutcome) ? 'complete' : 'attention_required';
       harvested = true;

@@ -14,6 +14,13 @@ const sha = (b: Buffer|string) => createHash('sha256').update(b).digest('hex');
 async function exactDir(p: string) { const s = await lstat(p).catch(() => undefined); if (!s?.isDirectory() || s.isSymbolicLink()) throw new Error('PROJECT_ROOT_INVALID'); return await realpath(p); }
 async function exactFile(p: string) { const s = await lstat(p).catch(() => undefined); if (!s?.isFile() || s.isSymbolicLink()) throw new Error('MISSION_PATH_INVALID'); const b=await readFile(p); new TextDecoder('utf-8',{fatal:true}).decode(b); return b; }
 async function assertSafeOutput(p: string, root: string) { const abs=path.resolve(p); const rel=path.relative(path.resolve(root),abs); if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('OUTPUT_PATH_INVALID'); let c=path.dirname(abs); while(c!==path.dirname(c)){const s=await lstat(c).catch(()=>undefined); if(s?.isSymbolicLink()||(s&&!s.isDirectory())) throw new Error('OUTPUT_PARENT_INVALID'); if(c===path.resolve(root)) break; c=path.dirname(c);} const s=await lstat(abs).catch(()=>undefined); if(s&&(!s.isFile()||s.isSymbolicLink())) throw new Error('OUTPUT_PATH_INVALID'); }
+async function assertRunDirectory(dir: string, expected: { dev: number; ino: number; real: string }) {
+  const stat = await lstat(dir).catch(() => undefined);
+  if (!stat?.isDirectory() || stat.isSymbolicLink() || stat.dev !== expected.dev || stat.ino !== expected.ino) throw new Error('RUN_DIRECTORY_CHANGED');
+  const real = await realpath(dir).catch(() => '');
+  if (real !== expected.real) throw new Error('RUN_DIRECTORY_CHANGED');
+  await assertSafeOutput(path.join(dir, 'output.md'), dir);
+}
 export async function runOracle(options: RunOptions): Promise<RunResult> {
   const root = await exactDir(options.projectRoot); const requestedMission = path.resolve(options.missionPath);
   const requestedRel = path.relative(path.resolve(options.projectRoot), requestedMission);
@@ -29,6 +36,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   const dir = path.resolve(options.runRoot ?? path.join(root, '.awgpt', runId));
   await mkdir(path.dirname(dir), { recursive: true });
   await mkdir(dir,{recursive:false}).catch((e: any) => { if (e.code === 'EEXIST') throw new Error('RUN_ID_COLLISION'); throw e; });
+  const runDirStat = await lstat(dir); const runDirIdentity = { dev: runDirStat.dev, ino: runDirStat.ino, real: await realpath(dir) };
   const statePath = path.join(dir,'state.json');
   const workflowPath = path.join(dir,'workflow.json');
   const stateStore = new StateStore(statePath);
@@ -75,7 +83,9 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
     if (child.pid) await registry.upsert({id:runId,pid:child.pid,command:command[0],args,cwd:root,project_root:root,run_id:runId,started_at:new Date().toISOString(),state:'running'});
     const out=await child;
     if (child.pid) { const rec=(await registry.list()).find(r=>r.id===runId); if(rec) await registry.upsert({...rec,state:'exited'}); }
-    const stdout=out.stdout??''; const stderr=out.stderr??''; await writeFile(path.join(dir,'stdout.log'),stdout); await writeFile(path.join(dir,'stderr.log'),stderr);
+    const stdout=out.stdout??''; const stderr=out.stderr??''; await assertRunDirectory(dir, runDirIdentity);
+    await writeFile(path.join(dir,'stdout.log'),stdout); await writeFile(path.join(dir,'stderr.log'),stderr);
+    await assertRunDirectory(dir, runDirIdentity);
     const outputStat = await lstat(outputPath).catch(() => undefined); if (outputStat && (!outputStat.isFile() || outputStat.isSymbolicLink())) throw new Error('OUTPUT_PATH_INVALID');
     const durable = outputStat ? await readFile(outputPath) : Buffer.from('');
     let outcome:'EXECUTED'|'NOT_EXECUTED'|'BLOCKED'|'pending'='pending'; let authority: SessionAuthority=out.exitCode===0?'terminal_observed':'submitted_unknown';
