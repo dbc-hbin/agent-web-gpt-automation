@@ -180,8 +180,8 @@ describe('doctor contract', () => {
     expect(report.recovery_action).toMatchObject({ kind: 'exact_session_recovery', status: 'COMPLETED' });
     expect(report.recovery_action?.detail).toContain('oracle-exact');
     expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
-      session_authority: 'terminal', terminal_harvested: true,
-      transport_status: 'complete', task_outcome: 'executed',
+      session_authority: 'terminal_observed', terminal_harvested: true,
+      transport_status: 'complete', task_outcome: 'EXECUTED',
     });
     const reacquired = await new LockManager({ projectRoot: project, retries: 0 }).tryAcquire();
     expect(reacquired.held).toBe(true);

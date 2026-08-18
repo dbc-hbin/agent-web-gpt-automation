@@ -231,14 +231,18 @@ var OracleRunStateSchema = z.object({
   run_id: z.string(),
   project_root: z.string(),
   mission_path: z.string(),
+  mission_sha256: Sha256.optional(),
   mode: z.literal("browser"),
   session_authority: SessionAuthority,
   transport_status: z.enum(["complete", "failed", "pending"]),
   task_outcome: TaskOutcome,
+  process: z.object({ pid: z.number().int().positive(), command: z.string(), args: z.array(z.string()) }).strict().optional(),
   oracle: z.object({
     resolved_version: z.string(),
     session_locator: z.string(),
-    slug: z.string()
+    slug: z.string(),
+    command: z.array(z.string()).optional(),
+    conversation_url: z.string().url().optional()
   }).strict().optional(),
   artifacts: z.object({
     output: z.string(),
@@ -677,7 +681,7 @@ async function executeExactRecovery(plan) {
         const contract = String(raw.task_outcome_contract ?? "legacy");
         if (contract === "v1") {
           const parsed = parseTaskOutcome(new TextDecoder("utf-8", { fatal: true }).decode(output));
-          taskOutcome = parsed.outcome.toLowerCase();
+          taskOutcome = parsed.outcome;
         } else {
           taskOutcome = "legacy_unclassified";
         }
@@ -690,8 +694,8 @@ async function executeExactRecovery(plan) {
       const destinationStat = await lstat(plan.authoritative_output_path).catch(() => void 0);
       if (destinationStat?.isSymbolicLink()) throw new Error("RECOVERY_OUTPUT_SYMLINK_FORBIDDEN");
       await rename2(plan.output_path, plan.authoritative_output_path);
-      authority = "terminal";
-      status = ["executed", "legacy_unclassified"].includes(taskOutcome) ? "complete" : "attention_required";
+      authority = "terminal_observed";
+      status = ["EXECUTED", "legacy_unclassified"].includes(taskOutcome) ? "complete" : "attention_required";
       harvested = true;
     } else {
       await rm2(plan.output_path, { force: true });
@@ -706,7 +710,7 @@ async function executeExactRecovery(plan) {
     exit_code: result.exitCode ?? 1,
     session_authority: authority,
     terminal_harvested: harvested,
-    transport_status: harvested ? "complete" : status === "session_live" ? "pending" : "incomplete",
+    transport_status: harvested ? "complete" : status === "session_live" ? "pending" : "failed",
     task_outcome: harvested ? taskOutcome : "pending",
     artifact_sha256: harvested ? createHash3("sha256").update(await readFile3(plan.authoritative_output_path)).digest("hex") : void 0
   };
@@ -1169,11 +1173,26 @@ async function runDoctor(options) {
 // src/cli/lifecycle.ts
 import { createHash as createHash4, randomUUID as randomUUID2 } from "node:crypto";
 import { copyFile, lstat as lstat2, mkdir as mkdir4, readFile as readFile5, readdir as readdir2, rm as rm3 } from "node:fs/promises";
+import { accessSync } from "node:fs";
 import * as path5 from "node:path";
+import { fileURLToPath } from "node:url";
 import writeFileAtomic4 from "write-file-atomic";
 import { z as z4 } from "zod";
 function resolvePackageSource(metaUrl = import.meta.url) {
-  return path5.resolve(new URL("../../", metaUrl).pathname);
+  let cursor = path5.dirname(fileURLToPath(metaUrl));
+  for (let i = 0; i < 5; i += 1) {
+    if (path5.basename(cursor) !== "node_modules" && pathExists(path5.join(cursor, "install-manifest.json"))) return cursor;
+    cursor = path5.dirname(cursor);
+  }
+  return path5.resolve(fileURLToPath(new URL("../", metaUrl)));
+}
+function pathExists(file) {
+  try {
+    accessSync(file);
+    return true;
+  } catch {
+    return false;
+  }
 }
 var RECEIPT_SCHEMA = "codex.chatgpt.install-receipt/v1";
 var WAL_SCHEMA = "codex.chatgpt.install-wal/v1";
@@ -1950,7 +1969,7 @@ import * as path11 from "node:path";
 
 // src/core/run/runtime.ts
 import { createHash as createHash5, randomUUID as randomUUID5 } from "node:crypto";
-import { lstat as lstat5, mkdir as mkdir8, readFile as readFile9, writeFile as writeFile2 } from "node:fs/promises";
+import { lstat as lstat5, mkdir as mkdir8, readFile as readFile9, writeFile as writeFile2, realpath } from "node:fs/promises";
 import * as path9 from "node:path";
 import { execa as execa4 } from "execa";
 
@@ -2042,10 +2061,11 @@ var StateStore = class {
 };
 
 // src/core/run/runtime.ts
+var sha = (b) => createHash5("sha256").update(b).digest("hex");
 async function exactDir(p) {
   const s = await lstat5(p).catch(() => void 0);
   if (!s?.isDirectory() || s.isSymbolicLink()) throw new Error("PROJECT_ROOT_INVALID");
-  return path9.resolve(p);
+  return await realpath(p);
 }
 async function exactFile(p) {
   const s = await lstat5(p).catch(() => void 0);
@@ -2056,20 +2076,45 @@ async function exactFile(p) {
 }
 async function runOracle(options) {
   const root = await exactDir(options.projectRoot);
-  const mission = path9.resolve(options.missionPath);
-  if (!path9.relative(root, mission) || path9.relative(root, mission).startsWith("..")) throw new Error("MISSION_ROOT_MISMATCH");
+  const requestedMission = path9.resolve(options.missionPath);
+  const requestedRel = path9.relative(path9.resolve(options.projectRoot), requestedMission);
+  if (requestedRel === ".." || requestedRel.startsWith(`..${path9.sep}`) || path9.isAbsolute(requestedRel)) throw new Error("MISSION_ROOT_MISMATCH");
+  const requestedStat = await lstat5(requestedMission).catch(() => void 0);
+  if (!requestedStat?.isFile() || requestedStat.isSymbolicLink()) throw new Error("MISSION_PATH_INVALID");
+  const mission = await realpath(requestedMission).catch(() => {
+    throw new Error("MISSION_PATH_INVALID");
+  });
+  const rel = path9.relative(root, mission);
+  if (rel === ".." || rel.startsWith(`..${path9.sep}`) || path9.isAbsolute(rel)) throw new Error("MISSION_ROOT_MISMATCH");
   const bytes = await exactFile(mission);
   const runId = options.runId ?? `run-${randomUUID5()}`;
+  if (options.manifestPath) {
+    const mp = path9.resolve(options.manifestPath);
+    const ms = await lstat5(mp).catch(() => void 0);
+    if (!ms?.isFile() || ms.isSymbolicLink()) throw new Error("MANIFEST_PATH_INVALID");
+    const manifest = OracleManifestSchema.parse(JSON.parse(await readFile9(await realpath(mp), "utf8")));
+    if (path9.resolve(manifest.project_root) !== root || path9.resolve(manifest.mission_path) !== mission) throw new Error("MANIFEST_BINDING_MISMATCH");
+  }
   const dir = path9.resolve(options.runRoot ?? path9.join(root, ".awgpt", runId));
-  await mkdir8(dir, { recursive: true });
+  await mkdir8(path9.dirname(dir), { recursive: true });
+  await mkdir8(dir, { recursive: false }).catch((e) => {
+    if (e.code === "EEXIST") throw new Error("RUN_ID_COLLISION");
+    throw e;
+  });
   const statePath = path9.join(dir, "state.json");
+  const workflowPath = path9.join(dir, "workflow.json");
   const stateStore = new StateStore(statePath);
-  const initial = { schema: "codex.chatgpt.oracle-run-state/v1", run_id: runId, project_root: root, mission_path: mission, mode: "browser", session_authority: "pre_submit", transport_status: "pending", task_outcome: "pending" };
+  const slug = `run-${sha(bytes).slice(0, 4)}-${sha(runId).slice(0, 4)}-${sha(root).slice(0, 4)}`;
+  const command = options.oracleCommand ?? ["oracle"];
+  const outputPath = path9.join(dir, "output.md");
+  const initial = { schema: "codex.chatgpt.oracle-run-state/v1", run_id: runId, project_root: root, mission_path: mission, mission_sha256: sha(bytes), mode: "browser", session_authority: "pre_submit", transport_status: "pending", task_outcome: "pending", oracle: { resolved_version: "0.17.1", session_locator: slug, slug, command } };
   const lock4 = new LockManager({ projectRoot: root });
   const release = await lock4.acquire();
   let retainLock = false;
   try {
     await stateStore.write(initial);
+    const wfBase = { schema: "codex.chatgpt.oracle-workflow/v1", run_id: runId, project_root: root, mission_path: mission, profile: "default", stage: "plan", session_authority: "pre_submit", task_outcome: "pending", revision: 0, receipts: [] };
+    await new StateStore(workflowPath).write(wfBase);
     if (options.devspace) {
       const q = await options.devspace.qualify(root, options.manifestPath);
       if (!q.ok) {
@@ -2082,9 +2127,9 @@ async function runOracle(options) {
       const gate = await execa4(options.localGate[0], options.localGate.slice(1), { cwd: root, shell: false, reject: false });
       if (gate.exitCode !== 0) throw new Error("LOCAL_GATE_FAILED");
     }
-    const command = options.oracleCommand ?? ["oracle"];
-    const args = [...command.slice(1), ...options.oracleArgs ?? [], "--project-root", root, "--mission", mission, "--run-id", runId];
+    const args = [...command.slice(1), "--engine", "browser", "--slug", slug, "--prompt", bytes.toString("utf8"), "--write-output", outputPath, ...options.oracleArgs ?? []];
     const child = execa4(command[0], args, { cwd: root, shell: false, reject: false, env: { ...process.env, ...options.oracleHome ? { ORACLE_HOME: options.oracleHome } : {} } });
+    await stateStore.write({ ...initial, session_authority: "submitted_unknown", transport_status: "pending", process: child.pid ? { pid: child.pid, command: command[0], args } : void 0 }, { explicitSettle: false });
     const registry = new ProcessRegistry(path9.join(dir, "processes.json"));
     if (child.pid) await registry.upsert({ id: runId, pid: child.pid, command: command[0], args, cwd: root, project_root: root, run_id: runId, started_at: (/* @__PURE__ */ new Date()).toISOString(), state: "running" });
     const out = await child;
@@ -2096,19 +2141,26 @@ async function runOracle(options) {
     const stderr = out.stderr ?? "";
     await writeFile2(path9.join(dir, "stdout.log"), stdout);
     await writeFile2(path9.join(dir, "stderr.log"), stderr);
+    const durable = await readFile9(outputPath).catch(() => Buffer.from(""));
     let outcome = "pending";
     let authority = out.exitCode === 0 ? "terminal_observed" : "submitted_unknown";
     if (out.exitCode === 0) {
       try {
-        outcome = parseTaskOutcome(stdout).outcome;
+        outcome = parseTaskOutcome(durable.toString("utf8")).outcome;
       } catch {
         authority = "submitted_unknown";
       }
     }
-    if (out.exitCode === 0) await writeFile2(path9.join(dir, "output.md"), stdout);
-    retainLock = true;
-    const state = { ...initial, session_authority: authority, transport_status: out.exitCode === 0 ? "complete" : "failed", task_outcome: outcome, artifacts: { output: path9.join(dir, "output.md"), transcript: path9.join(dir, "transcript.md"), stdout: path9.join(dir, "stdout.log"), stderr: path9.join(dir, "stderr.log"), browser_temp: dir } };
-    await stateStore.write(state);
+    if (out.exitCode === 0 && durable.length === 0) authority = "submitted_unknown";
+    await writeFile2(path9.join(dir, "transcript.md"), stdout);
+    if (authority === "terminal_observed" && outcome !== "pending") authority = "settled";
+    retainLock = ["submitted_unknown", "live", "terminal_observed"].includes(authority);
+    const state = { ...initial, session_authority: authority, transport_status: authority === "terminal_observed" ? "complete" : out.exitCode === 0 ? "pending" : "failed", task_outcome: outcome, process: child.pid ? { pid: child.pid, command: command[0], args } : void 0, artifacts: { output: outputPath, transcript: path9.join(dir, "transcript.md"), stdout: path9.join(dir, "stdout.log"), stderr: path9.join(dir, "stderr.log"), browser_temp: dir } };
+    const settled = authority === "settled";
+    const outputSha = sha(durable);
+    const receipt = { receipt_id: randomUUID5(), run_id: runId, stage: "plan", status: settled ? "completed" : "failed", input_sha256: sha(bytes), output_sha256: outputSha, previous_receipt_sha256: null, next_stage: settled ? "complete" : "attention_required", prologue: { project_root: root, mission_sha256: sha(bytes), profile: "default", semantic_revision: 0 }, external_actions: [{ kind: "oracle", status: settled ? "completed" : "failed" }], recovery: { session_authority: authority, attempt: 0, exact_slug: slug } };
+    await new StateStore(workflowPath).write({ ...wfBase, stage: receipt.next_stage, session_authority: authority, task_outcome: outcome, receipts: [receipt] }, { explicitSettle: settled });
+    await stateStore.write(state, { explicitSettle: authority === "settled" });
     return { statePath, state };
   } finally {
     if (!retainLock) await release();
@@ -2354,15 +2406,25 @@ function createCLI() {
     }
   });
   for (const action of ["install", "update"]) {
-    program2.command(action).description(`${action} repository-managed Agent Web GPT files with a receipt`).option("--source <path>", "repository source root", process.cwd()).option("--agent-home <path>", "installation root", path11.join(os4.homedir(), ".codex")).action(async (options) => {
-      const result = await installOrUpdate(action, options.source, options.agentHome);
-      console.log(JSON.stringify(result, null, 2));
+    program2.command(action).description(`${action} repository-managed Agent Web GPT files with a receipt`).option("--source <path>", "repository source root (defaults to the installed package)").option("--agent-home <path>", "installation root", path11.join(os4.homedir(), ".codex")).action(async (options) => {
+      try {
+        const result = await installOrUpdate(action, options.source ?? resolvePackageSource(), options.agentHome);
+        console.log(JSON.stringify(result, null, 2));
+      } catch (error) {
+        console.log(JSON.stringify({ schema: "codex.chatgpt.install/v1", ok: false, action, status: "FAILED", code: errorCode(error), message: error instanceof Error ? error.message : String(error) }, null, 2));
+        process.exitCode = 2;
+      }
     });
   }
   program2.command("rollback").description("Rollback the latest receipt without overwriting modified files").option("--agent-home <path>", "installation root", path11.join(os4.homedir(), ".codex")).option("--receipt <path>", "specific owned receipt").action(async (options) => {
-    const result = await rollbackInstall(options.agentHome, options.receipt);
-    console.log(JSON.stringify(result, null, 2));
-    if (!result.ok) process.exitCode = 2;
+    try {
+      const result = await rollbackInstall(options.agentHome, options.receipt);
+      console.log(JSON.stringify(result, null, 2));
+      if (!result.ok) process.exitCode = 2;
+    } catch (error) {
+      console.log(JSON.stringify({ schema: "codex.chatgpt.install/v1", ok: false, action: "rollback", status: "FAILED", code: errorCode(error), message: error instanceof Error ? error.message : String(error) }, null, 2));
+      process.exitCode = 2;
+    }
   });
   program2.command("run").description("Run Oracle workflow").requiredOption("--project-root <path>").requiredOption("--mission <path>").option("--run-root <path>").option("--manifest <path>").option("--oracle-command <path>").option("--oracle-arg <value...>").option("--oracle-home <path>").option("--devspace-url <url>", "DevSpace MCP endpoint", "http://127.0.0.1:7676/mcp").action(async (options) => {
     try {
@@ -2402,6 +2464,12 @@ function createCLI() {
     }
   });
   return program2;
+}
+function errorCode(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.startsWith("ENOENT") && message.includes("install-manifest.json")) return "LIFECYCLE_MANIFEST_MISSING";
+  if (message.includes("Expected") || message.includes("Invalid input") || message.includes("ZodError")) return "LIFECYCLE_MANIFEST_INVALID";
+  return message.split(":", 1)[0] || "LIFECYCLE_FAILED";
 }
 
 // src/core/orchestrator/state.ts
@@ -2523,7 +2591,7 @@ var StageGate = class {
 // src/core/orchestrator/gate-runner.ts
 import { createHash as createHash7 } from "node:crypto";
 import * as path12 from "node:path";
-import { lstat as lstat7, realpath } from "node:fs/promises";
+import { lstat as lstat7, realpath as realpath2 } from "node:fs/promises";
 import { execa as execa5 } from "execa";
 function sha2563(value) {
   return createHash7("sha256").update(value, "utf8").digest("hex");
@@ -2541,7 +2609,7 @@ async function runLocalGate(request) {
   try {
     const metadata = await lstat7(suppliedRoot);
     if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("GATE_PROJECT_ROOT_INVALID");
-    cwd = await realpath(suppliedRoot);
+    cwd = await realpath2(suppliedRoot);
   } catch {
     throw new Error("GATE_PROJECT_ROOT_INVALID");
   }
