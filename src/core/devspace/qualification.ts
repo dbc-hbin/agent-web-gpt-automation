@@ -16,8 +16,13 @@ export interface DevSpaceQualification {
 function rootsFrom(value: unknown): string[] {
   if (!value || typeof value !== 'object') return [];
   const obj = value as Record<string, unknown>;
-  const roots = obj.allowedRoots ?? obj.allowed_roots ?? (obj.result as Record<string, unknown> | undefined)?.allowedRoots;
-  return Array.isArray(roots) ? roots.filter((v): v is string => typeof v === 'string').map(v => path.resolve(v)) : [];
+  const roots = obj.allowedRoots ?? obj.allowed_roots;
+  if (Array.isArray(roots)) return roots.filter((v): v is string => typeof v === 'string').map(v => path.resolve(v));
+  for (const key of ['result', 'data', 'structuredContent']) {
+    const nested = rootsFrom(obj[key]);
+    if (nested.length) return nested;
+  }
+  return [];
 }
 
 export async function qualifyExactProjectRoot(
