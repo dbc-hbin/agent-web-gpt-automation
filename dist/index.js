@@ -2469,6 +2469,37 @@ var runGate = runLocalGate;
 
 // src/cli/index.ts
 import { createRequire } from "node:module";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+// src/core/workspace/commands.ts
+var workspaceCommands = (root) => [
+  { command: "devspace", args: ["doctor", "--root", root] },
+  { command: "tailscale", args: ["funnel", "status"] }
+];
+async function setupWorkspace(options) {
+  const root = options.root?.trim();
+  if (!root) throw new Error("WORKSPACE_ROOT_REQUIRED");
+  const commands = workspaceCommands(root);
+  const dryRun = options.apply !== true && options.dryRun !== false;
+  if (dryRun) return { schema: "codex.chatgpt.workspace/v1", status: "DRY_RUN", commands };
+  if (!options.runner) throw new Error("WORKSPACE_RUNNER_REQUIRED");
+  const results = [];
+  for (const c of commands) results.push({ ...c, result: await options.runner.run(c.command, [...c.args]) });
+  return { schema: "codex.chatgpt.workspace/v1", status: results.every((r) => r.result.code === 0) ? "READY" : "BLOCKED", results };
+}
+var doctorWorkspace = (root, runner) => setupWorkspace({ root, runner, dryRun: runner === void 0 });
+
+// src/cli/index.ts
+var execFileAsync = promisify(execFile);
+var localCommandRunner = { run: async (command, args) => {
+  try {
+    const result = await execFileAsync(command, args, { encoding: "utf8" });
+    return { code: 0, stdout: result.stdout, stderr: result.stderr };
+  } catch (error) {
+    return { code: typeof error?.code === "number" ? error.code : 1, stdout: error?.stdout ?? "", stderr: error?.stderr ?? error?.message ?? String(error) };
+  }
+} };
 var require2 = createRequire(import.meta.url);
 var packageMetadata = {};
 try {
@@ -2531,6 +2562,19 @@ function createCLI() {
     if (report.status === "FAIL") process.exitCode = 1;
     else if (report.status === "BLOCKED") process.exitCode = 2;
   });
+  const workspace = program2.command("workspace").description("Configure and inspect the exact DevSpace workspace");
+  for (const action of ["setup", "doctor"]) {
+    workspace.command(action).description(action === "setup" ? "Preview workspace commands (use --apply to execute)" : "Run workspace checks").option("--root <path>", "exact project root", process.cwd()).option("--apply", "execute commands; preview is the default").action(async (options) => {
+      try {
+        const result = await setupWorkspace({ root: options.root, apply: Boolean(options.apply), runner: localCommandRunner });
+        console.log(JSON.stringify(result, null, 2));
+        if (result.status === "BLOCKED") process.exitCode = 2;
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
+      }
+    });
+  }
   program2.command("auth-preflight").description("Validate ChatGPT authentication and required composer DOM without submitting").requiredOption("--copy-profile <path>", "manual-login profile seed").option("--oracle-home <path>", "isolated Oracle home", path12.join(os4.homedir(), ".oracle")).option("--chrome-path <path>", "Chrome executable override").action(async (options) => {
     const manager = new ProfileManager({ sourceProfilePath: options.copyProfile }, options.oracleHome);
     const id = `preflight-${Date.now()}`;
@@ -2588,7 +2632,7 @@ function createCLI() {
       process.exitCode = 2;
     }
   });
-  program2.command("run").description("Run Oracle workflow").requiredOption("--project-root <path>").requiredOption("--mission <path>").option("--run-root <path>").option("--manifest <path>").option("--oracle-command <path>").option("--oracle-arg <value...>").option("--oracle-home <path>").option("--devspace-url <url>", "DevSpace MCP endpoint", "http://127.0.0.1:7676/mcp").action(async (options) => {
+  program2.command("run").description("Run Oracle workflow").requiredOption("--project-root <path>").requiredOption("--mission <path>").option("--run-root <path>").option("--manifest <path>").option("--oracle-command <path>").option("--oracle-arg <value...>").option("--oracle-home <path>").option("--dry-run", "validate and plan without launching Oracle").option("--devspace-url <url>", "DevSpace MCP endpoint", "http://127.0.0.1:7676/mcp").action(async (options) => {
     try {
       const client = createHttpDevSpaceClient(options.devspaceUrl);
       const devspace = { qualify: async (root) => {
@@ -2596,7 +2640,7 @@ function createCLI() {
         const result = await qualifyExactProjectRoot2(root, client);
         return { ok: result.ok, reason: result.code };
       } };
-      console.log(JSON.stringify(await runOracle({ projectRoot: options.projectRoot, missionPath: options.mission, runRoot: options.runRoot, manifestPath: options.manifest, oracleCommand: options.oracleCommand ? [options.oracleCommand] : void 0, oracleArgs: options.oracleArg, oracleHome: options.oracleHome, devspace }), null, 2));
+      console.log(JSON.stringify(await runOracle({ projectRoot: options.projectRoot, missionPath: options.mission, runRoot: options.runRoot, manifestPath: options.manifest, oracleCommand: options.oracleCommand ? [options.oracleCommand] : void 0, oracleArgs: options.oracleArg, oracleHome: options.oracleHome, dryRun: options.dryRun === true, devspace }), null, 2));
     } catch (e) {
       console.error(e instanceof Error ? e.message : e);
       process.exitCode = 1;
@@ -2934,15 +2978,6 @@ ${f.content}`).join("\n\n");
   return { schema: "codex.chatgpt.context/v1", files, text };
 }
 
-// src/core/workspace/commands.ts
-async function setupWorkspace(options) {
-  const commands = [{ command: "devspace", args: ["doctor", "--root", options.root] }, { command: "tailscale", args: ["funnel", "status"] }];
-  if (options.dryRun || !options.runner) return { schema: "codex.chatgpt.workspace/v1", status: "DRY_RUN", commands };
-  const results = [];
-  for (const c of commands) results.push({ ...c, result: await options.runner.run(c.command, c.args) });
-  return { schema: "codex.chatgpt.workspace/v1", status: results.every((r) => r.result.code === 0) ? "READY" : "BLOCKED", results };
-}
-
 // src/core/diagnostics/incident.ts
 function diagnoseIncident(evidence) {
   return { schema: "codex.chatgpt.incident/v1", status: evidence.length ? "ATTENTION_REQUIRED" : "HEALTHY", evidence };
@@ -2998,6 +3033,7 @@ export {
   createLockAdapter,
   defaultChromeUserDataRoot,
   diagnoseIncident,
+  doctorWorkspace,
   evaluateAuthSnapshot,
   executeExactRecovery,
   installOrUpdate,
@@ -3034,6 +3070,7 @@ export {
   validTransitions,
   validateReceiptChain,
   validateWorkflowStateConsistency,
-  workflowTransitions
+  workflowTransitions,
+  workspaceCommands
 };
 //# sourceMappingURL=index.js.map
