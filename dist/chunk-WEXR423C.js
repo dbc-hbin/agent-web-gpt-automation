@@ -3,8 +3,13 @@ import * as path from "node:path";
 function rootsFrom(value) {
   if (!value || typeof value !== "object") return [];
   const obj = value;
-  const roots = obj.allowedRoots ?? obj.allowed_roots ?? obj.result?.allowedRoots;
-  return Array.isArray(roots) ? roots.filter((v) => typeof v === "string").map((v) => path.resolve(v)) : [];
+  const roots = obj.allowedRoots ?? obj.allowed_roots;
+  if (Array.isArray(roots)) return roots.filter((v) => typeof v === "string").map((v) => path.resolve(v));
+  for (const key of ["result", "data", "structuredContent"]) {
+    const nested = rootsFrom(obj[key]);
+    if (nested.length) return nested;
+  }
+  return [];
 }
 async function qualifyExactProjectRoot(projectRoot, client) {
   const root = path.resolve(projectRoot);
@@ -29,4 +34,4 @@ async function qualifyExactProjectRoot(projectRoot, client) {
 export {
   qualifyExactProjectRoot
 };
-//# sourceMappingURL=chunk-FOSMXQO6.js.map
+//# sourceMappingURL=chunk-WEXR423C.js.map

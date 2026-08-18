@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 import {
   qualifyExactProjectRoot
-} from "./chunk-FOSMXQO6.js";
+} from "./chunk-WEXR423C.js";
 
 // src/cli/index.ts
 import { Command } from "commander";
 
 // src/cli/doctor.ts
 import { z as z3 } from "zod";
-import { access, chmod, mkdir as mkdir3, mkdtemp, readdir, readFile as readFile4 } from "node:fs/promises";
+import { access, chmod, mkdir as mkdir4, mkdtemp, readdir, readFile as readFile5 } from "node:fs/promises";
 import { constants } from "node:fs";
 import * as path4 from "node:path";
 import * as os2 from "node:os";
@@ -48,6 +48,7 @@ var WorkflowStage = z.enum([
   "pro",
   "implementation",
   "final-web-gate",
+  "recovery",
   "complete",
   "attention_required"
 ]);
@@ -237,7 +238,7 @@ var OracleRunStateSchema = z.object({
   session_authority: SessionAuthority,
   transport_status: z.enum(["complete", "failed", "pending"]),
   task_outcome: TaskOutcome,
-  process: z.object({ pid: z.number().int().positive(), command: z.string(), args: z.array(z.string()) }).strict().optional(),
+  process: z.object({ pid: z.number().int().positive(), command: z.string(), args: z.array(z.string()), cwd: z.string().optional(), started_at: z.string().datetime().optional() }).strict().optional(),
   oracle: z.object({
     resolved_version: z.string(),
     session_locator: z.string(),
@@ -575,10 +576,99 @@ async function terminatePersistedProcess(record) {
 
 // src/core/forensics/recovery.ts
 import { execa as execa2 } from "execa";
-import { createHash as createHash3 } from "node:crypto";
-import { lstat, mkdir as mkdir2, readFile as readFile3, rename as rename2, rm as rm2, writeFile } from "node:fs/promises";
+import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
+import { lstat, mkdir as mkdir3, readFile as readFile4, rename as rename2, rm as rm2, writeFile, realpath } from "node:fs/promises";
 import * as path3 from "node:path";
+import writeFileAtomic4 from "write-file-atomic";
+
+// src/core/state/store.ts
 import writeFileAtomic3 from "write-file-atomic";
+import { mkdir as mkdir2, readFile as readFile3 } from "node:fs/promises";
+import { dirname as dirname2, resolve as resolve2 } from "node:path";
+import * as lockFile3 from "proper-lockfile";
+var IMMUTABLE_FIELDS = ["run_id", "project_root", "mission_path"];
+var StateStore = class {
+  statePath;
+  constructor(statePath) {
+    this.statePath = resolve2(statePath);
+  }
+  async write(data, options = {}) {
+    const validated = PersistentStateSchema.parse(data);
+    if (validated.schema === "codex.chatgpt.oracle-workflow/v1") {
+      validateWorkflowStateConsistency(validated);
+    }
+    await mkdir2(dirname2(this.statePath), { recursive: true });
+    const release = await lockFile3.lock(this.statePath, {
+      realpath: false,
+      retries: { retries: 20, minTimeout: 5, maxTimeout: 50 },
+      stale: 3e4,
+      update: 1e4
+    });
+    try {
+      const current = await this.readIfPresent();
+      if (current) {
+        this.assertUpdateAllowed(current, validated, options);
+      }
+      await writeFileAtomic3(this.statePath, `${JSON.stringify(validated, null, 2)}
+`, {
+        fsync: true
+      });
+    } finally {
+      await release();
+    }
+  }
+  async read() {
+    const raw = await readFile3(this.statePath, "utf8");
+    const parsed = PersistentStateSchema.parse(JSON.parse(raw));
+    if (parsed.schema === "codex.chatgpt.oracle-workflow/v1") {
+      validateWorkflowStateConsistency(parsed);
+    }
+    return parsed;
+  }
+  async readIfPresent() {
+    try {
+      return await this.read();
+    } catch (error) {
+      if (error.code === "ENOENT") return void 0;
+      throw error;
+    }
+  }
+  assertUpdateAllowed(current, next, options) {
+    if (current.schema !== next.schema) {
+      throw new Error("STATE_SCHEMA_CHANGE_FORBIDDEN");
+    }
+    for (const field of IMMUTABLE_FIELDS) {
+      if (field in current && field in next && current[field] !== next[field]) {
+        throw new Error(`STATE_IDENTITY_MISMATCH: ${field}`);
+      }
+    }
+    if (!canAdvanceSessionAuthority(current.session_authority, next.session_authority)) {
+      throw new Error(
+        `SESSION_AUTHORITY_REGRESSION: ${current.session_authority} -> ${next.session_authority}`
+      );
+    }
+    if (current.session_authority !== "settled" && next.session_authority === "settled" && options.explicitSettle !== true) {
+      throw new Error("EXPLICIT_SETTLE_EVIDENCE_REQUIRED");
+    }
+    if (current.task_outcome !== "pending" && current.task_outcome !== next.task_outcome) {
+      throw new Error("TASK_OUTCOME_MUTATED");
+    }
+    if (current.schema === "codex.chatgpt.oracle-run-state/v1" && next.schema === "codex.chatgpt.oracle-run-state/v1" && current.oracle?.slug && next.oracle?.slug !== current.oracle.slug) {
+      throw new Error("EXACT_SLUG_MUTATED");
+    }
+    if (current.schema === "codex.chatgpt.oracle-workflow/v1" && next.schema === "codex.chatgpt.oracle-workflow/v1") {
+      if (next.revision < current.revision) throw new Error("SEMANTIC_REVISION_REGRESSION");
+      if (next.receipts.length < current.receipts.length) throw new Error("RECEIPT_HISTORY_TRUNCATED");
+      current.receipts.forEach((receipt, index) => {
+        if (JSON.stringify(receipt) !== JSON.stringify(next.receipts[index])) {
+          throw new Error("RECEIPT_HISTORY_MUTATED");
+        }
+      });
+    }
+  }
+};
+
+// src/core/forensics/recovery.ts
 function validateOracleCommand(command) {
   if (!command.length || command.some((part) => !part)) throw new Error("ORACLE_COMMAND_INVALID");
   const executable = path3.basename(command[0]).toLowerCase();
@@ -604,7 +694,7 @@ function recoveryArgv(command, locator, action, outputPath) {
 }
 async function planExactRecovery(statePath, action = "live", oracleCommand) {
   const absolute = path3.resolve(statePath);
-  const state = OracleSessionStateSchema.parse(JSON.parse(await readFile3(absolute, "utf8")));
+  const state = OracleSessionStateSchema.parse(JSON.parse(await readFile4(absolute, "utf8")));
   const oracle = state.oracle ?? {};
   const locator = String(oracle.session_locator ?? oracle.slug ?? "").trim();
   const storedCommand = Array.isArray(oracle.command) ? oracle.command.filter((part) => typeof part === "string" && part.length > 0) : [];
@@ -629,8 +719,21 @@ async function planExactRecovery(statePath, action = "live", oracleCommand) {
   };
 }
 async function executeExactRecovery(plan) {
+  const preRaw = JSON.parse(await readFile4(plan.state_path, "utf8"));
+  const pre = OracleSessionStateSchema.parse(preRaw);
+  const mission = pre.mission ?? {};
+  if (typeof mission.path === "string" && typeof mission.sha256 === "string") {
+    const root = await realpath(plan.project_root);
+    const missionPath = await realpath(mission.path).catch(() => {
+      throw new Error("RECOVERY_MISSION_INVALID");
+    });
+    const rel = path3.relative(root, missionPath);
+    if (rel.startsWith("..") || path3.isAbsolute(rel)) throw new Error("RECOVERY_MISSION_ROOT_MISMATCH");
+    const currentSha = createHash3("sha256").update(await readFile4(missionPath)).digest("hex");
+    if (currentSha !== mission.sha256) throw new Error("RECOVERY_MISSION_MUTATED");
+  }
   const runDir = path3.dirname(plan.output_path);
-  await mkdir2(runDir, { recursive: true });
+  await mkdir3(runDir, { recursive: true });
   const stdoutPath = path3.join(runDir, `recovery-${plan.action}-stdout.log`);
   const stderrPath = path3.join(runDir, `recovery-${plan.action}-stderr.log`);
   const [command, ...args] = plan.argv;
@@ -645,7 +748,7 @@ async function executeExactRecovery(plan) {
     writeFile(`${stdoutPath}.tmp`, result.stdout, "utf8").then(() => rename2(`${stdoutPath}.tmp`, stdoutPath)),
     writeFile(`${stderrPath}.tmp`, result.stderr, "utf8").then(() => rename2(`${stderrPath}.tmp`, stderrPath))
   ]);
-  const output = await readFile3(plan.output_path).catch(() => Buffer.alloc(0));
+  const output = await readFile4(plan.output_path).catch(() => Buffer.alloc(0));
   const stdout = result.stdout ?? "";
   const states = [...stdout.matchAll(/^\s*State:\s*([a-z][a-z0-9_-]*)\s*$/gim)];
   const observedState = states.at(-1)?.[1].toLowerCase();
@@ -653,7 +756,7 @@ async function executeExactRecovery(plan) {
   const observedUrl = urls.at(-1)?.[1];
   const liveStates = /* @__PURE__ */ new Set(["running", "streaming", "thinking", "active", "stalled"]);
   const terminalStates = /* @__PURE__ */ new Set(["complete", "completed", "done", "finished", "failed", "error", "cancelled", "canceled"]);
-  const raw = JSON.parse(await readFile3(plan.state_path, "utf8"));
+  const raw = JSON.parse(await readFile4(plan.state_path, "utf8"));
   const before = OracleSessionStateSchema.parse(raw);
   if (before.run_id !== plan.run_id || path3.resolve(before.project_root) !== plan.project_root) {
     throw new Error("RECOVERY_STATE_IDENTITY_MUTATED");
@@ -694,8 +797,9 @@ async function executeExactRecovery(plan) {
     if (semanticOutput) {
       const destinationStat = await lstat(plan.authoritative_output_path).catch(() => void 0);
       if (destinationStat?.isSymbolicLink()) throw new Error("RECOVERY_OUTPUT_SYMLINK_FORBIDDEN");
+      if (destinationStat) throw new Error("RECOVERY_OUTPUT_ALREADY_AUTHORITATIVE");
       await rename2(plan.output_path, plan.authoritative_output_path);
-      authority = "terminal_observed";
+      authority = "settled";
       status = ["EXECUTED", "legacy_unclassified"].includes(taskOutcome) ? "complete" : "attention_required";
       harvested = true;
     } else {
@@ -713,11 +817,52 @@ async function executeExactRecovery(plan) {
     terminal_harvested: harvested,
     transport_status: harvested ? "complete" : status === "session_live" ? "pending" : "failed",
     task_outcome: harvested ? taskOutcome : "pending",
-    artifact_sha256: harvested ? createHash3("sha256").update(await readFile3(plan.authoritative_output_path)).digest("hex") : void 0
+    artifact_sha256: harvested ? createHash3("sha256").update(await readFile4(plan.authoritative_output_path)).digest("hex") : void 0
   };
   OracleSessionStateSchema.parse(updated);
-  await writeFileAtomic3(plan.state_path, `${JSON.stringify(updated, null, 2)}
+  await writeFileAtomic4(plan.state_path, `${JSON.stringify(updated, null, 2)}
 `, { fsync: true });
+  if (harvested) {
+    const workflowPath = path3.join(path3.dirname(plan.state_path), "workflow.json");
+    const workflowRaw = await readFile4(workflowPath, "utf8").catch(() => void 0);
+    if (!workflowRaw) {
+      return {
+        exit_code: result.exitCode ?? 1,
+        stdout_path: stdoutPath,
+        stderr_path: stderrPath,
+        output_nonempty: harvested,
+        status,
+        session_authority: authority
+      };
+    }
+    const workflow = WorkflowRunStateSchema.parse(JSON.parse(workflowRaw));
+    const previous = workflow.receipts.at(-1);
+    if (!previous) throw new Error("RECOVERY_WORKFLOW_MISSING_RECEIPT");
+    const artifactHash = String(updated.artifact_sha256);
+    const receipt = {
+      receipt_id: randomUUID2(),
+      run_id: workflow.run_id,
+      stage: "recovery",
+      status: "completed",
+      input_sha256: previous.output_sha256,
+      output_sha256: artifactHash,
+      previous_receipt_sha256: receiptSha256(previous),
+      next_stage: status === "complete" ? "complete" : "attention_required",
+      prologue: { ...previous.prologue },
+      external_actions: [{ kind: "oracle", status: "completed" }],
+      recovery: { session_authority: "settled", attempt: previous.recovery.attempt + 1, exact_slug: plan.locator }
+    };
+    const next = {
+      ...workflow,
+      stage: receipt.next_stage,
+      session_authority: "settled",
+      task_outcome: taskOutcome,
+      revision: workflow.revision + 1,
+      receipts: [...workflow.receipts, receipt]
+    };
+    await new StateStore(workflowPath).write(next, { explicitSettle: true });
+    await new LockManager({ projectRoot: plan.project_root }).reclaimAbandoned("settled");
+  }
   return {
     exit_code: result.exitCode ?? 1,
     stdout_path: stdoutPath,
@@ -758,7 +903,7 @@ var DEVSPACE_ACCEPTED_STATUSES = /* @__PURE__ */ new Set([200, 401, 403, 405, 40
 var CHATGPT_LOGIN_URL = "https://chatgpt.com/auth/login";
 async function prepareProfileLogin(oracleHome = path4.join(os2.homedir(), ".oracle")) {
   const root = path4.resolve(oracleHome, "login-profiles");
-  await mkdir3(root, { recursive: true, mode: 448 });
+  await mkdir4(root, { recursive: true, mode: 448 });
   const profilePath = await mkdtemp(path4.join(root, "manual-login-"));
   if (process.platform !== "win32") await chmod(profilePath, 448);
   return { profile_path: profilePath, url: CHATGPT_LOGIN_URL };
@@ -829,7 +974,7 @@ async function defaultReconnectDevSpace(projectRoot) {
   return false;
 }
 async function auditOracleState(statePath) {
-  const content = await readFile4(statePath, "utf8");
+  const content = await readFile5(statePath, "utf8");
   const raw = JSON.parse(content);
   const stateResult = PersistentStateSchema.safeParse(raw);
   if (!stateResult.success) {
@@ -1172,12 +1317,12 @@ async function runDoctor(options) {
 }
 
 // src/cli/lifecycle.ts
-import { createHash as createHash4, randomUUID as randomUUID2 } from "node:crypto";
-import { copyFile, lstat as lstat2, mkdir as mkdir4, readFile as readFile5, readdir as readdir2, rm as rm3 } from "node:fs/promises";
+import { createHash as createHash4, randomUUID as randomUUID3 } from "node:crypto";
+import { copyFile, lstat as lstat2, mkdir as mkdir5, readFile as readFile6, readdir as readdir2, rm as rm3 } from "node:fs/promises";
 import { accessSync } from "node:fs";
 import * as path5 from "node:path";
 import { fileURLToPath } from "node:url";
-import writeFileAtomic4 from "write-file-atomic";
+import writeFileAtomic5 from "write-file-atomic";
 import { z as z4 } from "zod";
 function resolvePackageSource(metaUrl = import.meta.url) {
   let cursor = path5.dirname(fileURLToPath(metaUrl));
@@ -1204,7 +1349,7 @@ var InstallManifestSchema = z4.object({
 }).passthrough();
 async function readInstallManifest(sourceRoot) {
   const root = path5.resolve(sourceRoot);
-  return InstallManifestSchema.parse(JSON.parse(await readFile5(path5.join(root, "install-manifest.json"), "utf8")));
+  return InstallManifestSchema.parse(JSON.parse(await readFile6(path5.join(root, "install-manifest.json"), "utf8")));
 }
 async function manifestVersion(sourceRoot) {
   return (await readInstallManifest(sourceRoot)).version;
@@ -1237,11 +1382,11 @@ function sha256(bytes) {
   return createHash4("sha256").update(bytes).digest("hex");
 }
 async function sha256File(file) {
-  return sha256(await readFile5(file));
+  return sha256(await readFile6(file));
 }
 async function writeJsonAtomic(file, value) {
-  await mkdir4(path5.dirname(file), { recursive: true });
-  await writeFileAtomic4(file, `${JSON.stringify(value, null, 2)}
+  await mkdir5(path5.dirname(file), { recursive: true });
+  await writeFileAtomic5(file, `${JSON.stringify(value, null, 2)}
 `, { fsync: true });
 }
 function safeChild(root, relative5) {
@@ -1264,8 +1409,8 @@ async function assertNoSymlink(root, candidate) {
   }
 }
 async function copyAtomic(source, destination) {
-  await mkdir4(path5.dirname(destination), { recursive: true });
-  const temporary = `${destination}.${randomUUID2()}.tmp`;
+  await mkdir5(path5.dirname(destination), { recursive: true });
+  const temporary = `${destination}.${randomUUID3()}.tmp`;
   try {
     await copyFile(source, temporary);
     await import("node:fs/promises").then((fs) => fs.rename(temporary, destination));
@@ -1317,7 +1462,7 @@ async function recoverPendingInstalls(agentHome) {
     const walPath = path5.join(backupsRoot, name, "install.wal.json");
     let wal;
     try {
-      wal = InstallWalSchema.parse(JSON.parse(await readFile5(walPath, "utf8")));
+      wal = InstallWalSchema.parse(JSON.parse(await readFile6(walPath, "utf8")));
     } catch (error) {
       if (error.code === "ENOENT") continue;
       throw error;
@@ -1347,9 +1492,9 @@ async function installOrUpdate(action, sourceRoot, agentHome) {
   const source = path5.resolve(sourceRoot);
   const home = path5.resolve(agentHome);
   const manifest = await manifestFiles(source);
-  await mkdir4(home, { recursive: true });
+  await mkdir5(home, { recursive: true });
   await recoverPendingInstalls(home);
-  const stamp = `${(/* @__PURE__ */ new Date()).toISOString().replace(/[-:.TZ]/g, "")}-${randomUUID2()}`;
+  const stamp = `${(/* @__PURE__ */ new Date()).toISOString().replace(/[-:.TZ]/g, "")}-${randomUUID3()}`;
   const backup2 = path5.join(home, "backups", `agent-web-gpt-${stamp}`);
   const receiptPath = path5.join(home, "receipts", `agent-web-gpt-${stamp}.json`);
   const walPath = path5.join(backup2, "install.wal.json");
@@ -1423,7 +1568,7 @@ async function rollbackInstall(agentHome, requestedReceipt) {
   const receiptPath = path5.resolve(requestedReceipt ?? await latestReceipt(home));
   const receiptsRoot = path5.join(home, "receipts");
   if (!receiptPath.startsWith(`${receiptsRoot}${path5.sep}`)) throw new Error("LIFECYCLE_RECEIPT_NOT_OWNED");
-  const receipt = InstallReceiptSchema.parse(JSON.parse(await readFile5(receiptPath, "utf8")));
+  const receipt = InstallReceiptSchema.parse(JSON.parse(await readFile6(receiptPath, "utf8")));
   if (path5.resolve(receipt.agent_home) !== home || !path5.resolve(receipt.backup).startsWith(`${path5.join(home, "backups")}${path5.sep}`)) {
     throw new Error("LIFECYCLE_RECEIPT_NOT_OWNED");
   }
@@ -1441,7 +1586,7 @@ async function rollbackInstall(agentHome, requestedReceipt) {
 import { z as z5 } from "zod";
 import * as crypto2 from "node:crypto";
 import * as path6 from "node:path";
-import { access as access2, chmod as chmod2, cp, lstat as lstat3, mkdir as mkdir5, readdir as readdir3, rm as rm4 } from "node:fs/promises";
+import { access as access2, chmod as chmod2, cp, lstat as lstat3, mkdir as mkdir6, readdir as readdir3, rm as rm4 } from "node:fs/promises";
 import { constants as constants2 } from "node:fs";
 var ProfileConfig = z5.object({
   sourceProfilePath: z5.string(),
@@ -1462,7 +1607,7 @@ var ProfileManager = class {
     if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error("PROFILE_ID_INVALID");
     const source = await lstat3(this.seedPath);
     if (!source.isDirectory() || source.isSymbolicLink()) throw new Error("PROFILE_SEED_INVALID");
-    await mkdir5(this.sessionRoot, { recursive: true, mode: 448 });
+    await mkdir6(this.sessionRoot, { recursive: true, mode: 448 });
     const copyTo = path6.join(this.sessionRoot, `${id}-${crypto2.randomUUID()}`);
     try {
       await cp(this.seedPath, copyTo, {
@@ -1549,7 +1694,7 @@ var ProfileManager = class {
 
 // src/core/process/auth-preflight.ts
 import { execa as execa3 } from "execa";
-import { access as access3, readFile as readFile6 } from "node:fs/promises";
+import { access as access3, readFile as readFile7 } from "node:fs/promises";
 import * as path7 from "node:path";
 function evaluateAuthSnapshot(snapshot) {
   if ([401, 403].includes(snapshot.backend_status) || snapshot.login_cta) {
@@ -1639,7 +1784,7 @@ async function preflightCopiedProfile(profilePath, chromePath) {
     let port;
     for (let attempt = 0; attempt < 100; attempt += 1) {
       try {
-        port = (await readFile6(portFile, "utf8")).split(/\r?\n/, 1)[0];
+        port = (await readFile7(portFile, "utf8")).split(/\r?\n/, 1)[0];
         if (/^\d+$/.test(port)) break;
       } catch {
       }
@@ -1673,20 +1818,20 @@ async function findChrome() {
 }
 
 // src/core/process/cookie-recovery.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
+import { randomUUID as randomUUID5 } from "node:crypto";
 import { backup, DatabaseSync } from "node:sqlite";
 import {
   chmod as chmod3,
   copyFile as copyFile2,
   lstat as lstat4,
-  mkdir as mkdir6,
-  readFile as readFile7,
+  mkdir as mkdir7,
+  readFile as readFile8,
   rename as rename3,
   rm as rm5
 } from "node:fs/promises";
 import * as os3 from "node:os";
 import * as path8 from "node:path";
-import writeFileAtomic5 from "write-file-atomic";
+import writeFileAtomic6 from "write-file-atomic";
 var COOKIE_SCOPE_SQL = `(
   host_key = 'chatgpt.com' OR host_key LIKE '%.chatgpt.com'
   OR host_key = 'openai.com' OR host_key LIKE '%.openai.com'
@@ -1719,7 +1864,7 @@ function validateProfileName(value) {
 async function discoverSourceProfile(root, explicit) {
   if (explicit) return validateProfileName(explicit);
   try {
-    const localState = JSON.parse(await readFile7(path8.join(root, "Local State"), "utf8"));
+    const localState = JSON.parse(await readFile8(path8.join(root, "Local State"), "utf8"));
     if (typeof localState.profile?.last_used === "string") {
       return validateProfileName(localState.profile.last_used);
     }
@@ -1806,8 +1951,8 @@ function importCookieRows(sourcePath, targetPath) {
   }
 }
 async function buildMergedCookieKey(sourceLocalState, targetLocalState) {
-  const original = await readFile7(targetLocalState);
-  const source = JSON.parse(await readFile7(sourceLocalState, "utf8"));
+  const original = await readFile8(targetLocalState);
+  const source = JSON.parse(await readFile8(sourceLocalState, "utf8"));
   const sourceKeys = Object.fromEntries(
     ["encrypted_key", "app_bound_encrypted_key"].filter((key) => typeof source.os_crypt?.[key] === "string").map((key) => [key, source.os_crypt[key]])
   );
@@ -1835,7 +1980,7 @@ async function restoreCookieFiles(target, original, sidecars, originalLocalState
     await Promise.all(["-wal", "-shm"].map((suffix) => rm5(`${target}${suffix}`, { force: true })));
     await copyFile2(original, target);
     for (const suffix of sidecars) await copyFile2(`${original}${suffix}`, `${target}${suffix}`);
-    await writeFileAtomic5(targetLocalState, originalLocalState, { fsync: true, mode: 384 });
+    await writeFileAtomic6(targetLocalState, originalLocalState, { fsync: true, mode: 384 });
   } catch (error) {
     throw new Error("COOKIE_RECOVERY_ROLLBACK_FAILED", { cause: error });
   }
@@ -1861,8 +2006,8 @@ async function recoverChatGptLogin(options) {
     assertRegularFile(sourceLocalState, "CHROME_LOCAL_STATE_INVALID"),
     assertRegularFile(targetLocalState, "PROFILE_LOCAL_STATE_INVALID")
   ]);
-  const work = path8.join(path8.dirname(seed), `.cookie-recovery-${randomUUID4()}`);
-  await mkdir6(work, { recursive: false, mode: 448 });
+  const work = path8.join(path8.dirname(seed), `.cookie-recovery-${randomUUID5()}`);
+  await mkdir7(work, { recursive: false, mode: 448 });
   const sourceSnapshot = path8.join(work, "source-cookies.sqlite");
   const candidate = path8.join(work, "candidate-cookies.sqlite");
   const originalCookies = path8.join(work, "original-cookies.sqlite");
@@ -1904,14 +2049,14 @@ async function recoverChatGptLogin(options) {
     }
     const localState = await buildMergedCookieKey(sourceLocalState, targetLocalState);
     originalLocalState = localState.original;
-    await writeFileAtomic5(targetLocalState, localState.merged, { fsync: true, mode: 384 });
+    await writeFileAtomic6(targetLocalState, localState.merged, { fsync: true, mode: 384 });
     replaced = true;
     await rename3(targetCookies, displacedCookies);
     await Promise.all(["-wal", "-shm"].map((suffix) => rm5(`${targetCookies}${suffix}`, { force: true })));
     await rename3(candidate, targetCookies);
     if (process.platform !== "win32") await chmod3(targetCookies, 384);
     const manager = new ProfileManager({ sourceProfilePath: seed }, oracleHome);
-    const id = `cookie-recovery-${Date.now()}-${randomUUID4()}`;
+    const id = `cookie-recovery-${Date.now()}-${randomUUID5()}`;
     const copied = await manager.createSession(id);
     let auth;
     try {
@@ -1960,7 +2105,7 @@ async function recoverChatGptLogin(options) {
           targetLocalState
         );
       } else if (originalLocalState) {
-        await writeFileAtomic5(targetLocalState, originalLocalState, { fsync: true, mode: 384 });
+        await writeFileAtomic6(targetLocalState, originalLocalState, { fsync: true, mode: 384 });
       }
     } catch (rollbackError) {
       throw new AggregateError([error, rollbackError], "COOKIE_RECOVERY_ROLLBACK_FAILED");
@@ -1976,104 +2121,15 @@ import * as os4 from "node:os";
 import * as path12 from "node:path";
 
 // src/core/run/runtime.ts
-import { createHash as createHash5, randomUUID as randomUUID5 } from "node:crypto";
-import { lstat as lstat5, mkdir as mkdir8, readFile as readFile9, writeFile as writeFile2, realpath } from "node:fs/promises";
+import { createHash as createHash5, randomUUID as randomUUID6 } from "node:crypto";
+import { lstat as lstat5, mkdir as mkdir8, readFile as readFile9, writeFile as writeFile2, realpath as realpath2 } from "node:fs/promises";
 import * as path9 from "node:path";
 import { execa as execa4 } from "execa";
-
-// src/core/state/store.ts
-import writeFileAtomic6 from "write-file-atomic";
-import { mkdir as mkdir7, readFile as readFile8 } from "node:fs/promises";
-import { dirname as dirname5, resolve as resolve8 } from "node:path";
-import * as lockFile3 from "proper-lockfile";
-var IMMUTABLE_FIELDS = ["run_id", "project_root", "mission_path"];
-var StateStore = class {
-  statePath;
-  constructor(statePath) {
-    this.statePath = resolve8(statePath);
-  }
-  async write(data, options = {}) {
-    const validated = PersistentStateSchema.parse(data);
-    if (validated.schema === "codex.chatgpt.oracle-workflow/v1") {
-      validateWorkflowStateConsistency(validated);
-    }
-    await mkdir7(dirname5(this.statePath), { recursive: true });
-    const release = await lockFile3.lock(this.statePath, {
-      realpath: false,
-      retries: { retries: 20, minTimeout: 5, maxTimeout: 50 },
-      stale: 3e4,
-      update: 1e4
-    });
-    try {
-      const current = await this.readIfPresent();
-      if (current) {
-        this.assertUpdateAllowed(current, validated, options);
-      }
-      await writeFileAtomic6(this.statePath, `${JSON.stringify(validated, null, 2)}
-`, {
-        fsync: true
-      });
-    } finally {
-      await release();
-    }
-  }
-  async read() {
-    const raw = await readFile8(this.statePath, "utf8");
-    const parsed = PersistentStateSchema.parse(JSON.parse(raw));
-    if (parsed.schema === "codex.chatgpt.oracle-workflow/v1") {
-      validateWorkflowStateConsistency(parsed);
-    }
-    return parsed;
-  }
-  async readIfPresent() {
-    try {
-      return await this.read();
-    } catch (error) {
-      if (error.code === "ENOENT") return void 0;
-      throw error;
-    }
-  }
-  assertUpdateAllowed(current, next, options) {
-    if (current.schema !== next.schema) {
-      throw new Error("STATE_SCHEMA_CHANGE_FORBIDDEN");
-    }
-    for (const field of IMMUTABLE_FIELDS) {
-      if (field in current && field in next && current[field] !== next[field]) {
-        throw new Error(`STATE_IDENTITY_MISMATCH: ${field}`);
-      }
-    }
-    if (!canAdvanceSessionAuthority(current.session_authority, next.session_authority)) {
-      throw new Error(
-        `SESSION_AUTHORITY_REGRESSION: ${current.session_authority} -> ${next.session_authority}`
-      );
-    }
-    if (current.session_authority !== "settled" && next.session_authority === "settled" && options.explicitSettle !== true) {
-      throw new Error("EXPLICIT_SETTLE_EVIDENCE_REQUIRED");
-    }
-    if (current.task_outcome !== "pending" && current.task_outcome !== next.task_outcome) {
-      throw new Error("TASK_OUTCOME_MUTATED");
-    }
-    if (current.schema === "codex.chatgpt.oracle-run-state/v1" && next.schema === "codex.chatgpt.oracle-run-state/v1" && current.oracle?.slug && next.oracle?.slug !== current.oracle.slug) {
-      throw new Error("EXACT_SLUG_MUTATED");
-    }
-    if (current.schema === "codex.chatgpt.oracle-workflow/v1" && next.schema === "codex.chatgpt.oracle-workflow/v1") {
-      if (next.revision < current.revision) throw new Error("SEMANTIC_REVISION_REGRESSION");
-      if (next.receipts.length < current.receipts.length) throw new Error("RECEIPT_HISTORY_TRUNCATED");
-      current.receipts.forEach((receipt, index) => {
-        if (JSON.stringify(receipt) !== JSON.stringify(next.receipts[index])) {
-          throw new Error("RECEIPT_HISTORY_MUTATED");
-        }
-      });
-    }
-  }
-};
-
-// src/core/run/runtime.ts
 var sha = (b) => createHash5("sha256").update(b).digest("hex");
 async function exactDir(p) {
   const s = await lstat5(p).catch(() => void 0);
   if (!s?.isDirectory() || s.isSymbolicLink()) throw new Error("PROJECT_ROOT_INVALID");
-  return await realpath(p);
+  return await realpath2(p);
 }
 async function exactFile(p) {
   const s = await lstat5(p).catch(() => void 0);
@@ -2089,19 +2145,19 @@ async function runOracle(options) {
   if (requestedRel === ".." || requestedRel.startsWith(`..${path9.sep}`) || path9.isAbsolute(requestedRel)) throw new Error("MISSION_ROOT_MISMATCH");
   const requestedStat = await lstat5(requestedMission).catch(() => void 0);
   if (!requestedStat?.isFile() || requestedStat.isSymbolicLink()) throw new Error("MISSION_PATH_INVALID");
-  const mission = await realpath(requestedMission).catch(() => {
+  const mission = await realpath2(requestedMission).catch(() => {
     throw new Error("MISSION_PATH_INVALID");
   });
   const rel = path9.relative(root, mission);
   if (rel === ".." || rel.startsWith(`..${path9.sep}`) || path9.isAbsolute(rel)) throw new Error("MISSION_ROOT_MISMATCH");
   const bytes = await exactFile(mission);
-  const runId = options.runId ?? `run-${randomUUID5()}`;
+  const runId = options.runId ?? `run-${randomUUID6()}`;
   let manifest;
   if (options.manifestPath) {
     const mp = path9.resolve(options.manifestPath);
     const ms = await lstat5(mp).catch(() => void 0);
     if (!ms?.isFile() || ms.isSymbolicLink()) throw new Error("MANIFEST_PATH_INVALID");
-    manifest = OracleManifestSchema.parse(JSON.parse(await readFile9(await realpath(mp), "utf8")));
+    manifest = OracleManifestSchema.parse(JSON.parse(await readFile9(await realpath2(mp), "utf8")));
     if (path9.resolve(manifest.project_root) !== root || path9.resolve(manifest.mission_path) !== mission) throw new Error("MANIFEST_BINDING_MISMATCH");
   }
   const dir = path9.resolve(options.runRoot ?? path9.join(root, ".awgpt", runId));
@@ -2114,12 +2170,26 @@ async function runOracle(options) {
   const workflowPath = path9.join(dir, "workflow.json");
   const stateStore = new StateStore(statePath);
   const slug = `run-${sha(bytes).slice(0, 4)}-${sha(runId).slice(0, 4)}-${sha(root).slice(0, 4)}`;
-  const command = options.oracleCommand ?? (process.platform === "win32" ? ["npx.cmd", "--yes", "@steipete/oracle@0.17.1"] : ["npx", "--yes", "@steipete/oracle@0.17.1"]);
-  const versionCheck = await execa4(command[0], [...command.slice(1), ...options.oracleArgs ?? [], "--version"], { cwd: root, shell: false, reject: false });
-  if (versionCheck.exitCode !== 0 || !/\b0\.17\.1\b/.test(`${versionCheck.stdout}
-${versionCheck.stderr}`)) throw new Error("ORACLE_VERSION_UNSUPPORTED");
+  const defaultCommand = process.platform === "win32" ? ["npx.cmd", "--yes", "@steipete/oracle@0.17.1"] : ["npx", "--yes", "@steipete/oracle@0.17.1"];
+  const command = manifest?.oracle_command ?? options.oracleCommand ?? defaultCommand;
+  if (manifest?.oracle_command && options.oracleCommand && JSON.stringify(manifest.oracle_command) !== JSON.stringify(options.oracleCommand)) throw new Error("ORACLE_COMMAND_CONFLICT");
+  if (manifest?.oracle_args && options.oracleArgs && JSON.stringify(manifest.oracle_args) !== JSON.stringify(options.oracleArgs)) throw new Error("ORACLE_ARGS_CONFLICT");
+  const oracleArgs = manifest?.oracle_args ?? options.oracleArgs ?? [];
+  const versionCheck = await execa4(command[0], [...command.slice(1), ...oracleArgs, "--version"], { cwd: root, shell: false, reject: false });
+  const version = `${versionCheck.stdout}
+${versionCheck.stderr}`.trim();
+  if (versionCheck.exitCode !== 0 || !/(^|\n|\s)v?0\.17\.1(?:\s|$)/.test(version) || /0\.17\.1-(?:beta|rc|alpha)/i.test(version)) throw new Error("ORACLE_VERSION_UNSUPPORTED");
   const outputPath = path9.join(dir, "output.md");
+  if (manifest?.copy_profile) {
+    const s = await lstat5(manifest.copy_profile).catch(() => void 0);
+    if (!s || s.isSymbolicLink() || !s.isDirectory()) throw new Error("COPY_PROFILE_INVALID");
+  }
+  if (manifest?.attachments) for (const attachment of manifest.attachments) {
+    const s = await lstat5(attachment).catch(() => void 0);
+    if (!s || s.isSymbolicLink() || !s.isFile()) throw new Error("ATTACHMENT_INVALID");
+  }
   const initial = { schema: "codex.chatgpt.oracle-run-state/v1", run_id: runId, project_root: root, mission_path: mission, mission_sha256: sha(bytes), mission: { path: mission, sha256: sha(bytes) }, mode: "browser", session_authority: "pre_submit", transport_status: "pending", task_outcome: "pending", oracle: { resolved_version: "0.17.1", session_locator: slug, slug, command } };
+  if (options.dryRun) return { statePath, state: initial };
   const lock4 = new LockManager({ projectRoot: root });
   const release = await lock4.acquire();
   let retainLock = false;
@@ -2129,7 +2199,7 @@ ${versionCheck.stderr}`)) throw new Error("ORACLE_VERSION_UNSUPPORTED");
     await new StateStore(workflowPath).write(wfBase);
     const preSubmitFailure = async (reason) => {
       const failed = { ...initial, session_authority: "settled", transport_status: "failed", task_outcome: "NOT_EXECUTED" };
-      const receipt2 = { receipt_id: randomUUID5(), run_id: runId, stage: "plan", status: "failed", input_sha256: sha(bytes), output_sha256: sha(reason), previous_receipt_sha256: null, next_stage: "attention_required", prologue: { project_root: root, mission_sha256: sha(bytes), profile: "default", semantic_revision: 0 }, external_actions: [{ kind: "devspace", status: "failed" }], recovery: { session_authority: "settled", attempt: 0, exact_slug: slug } };
+      const receipt2 = { receipt_id: randomUUID6(), run_id: runId, stage: "plan", status: "failed", input_sha256: sha(bytes), output_sha256: sha(reason), previous_receipt_sha256: null, next_stage: "attention_required", prologue: { project_root: root, mission_sha256: sha(bytes), profile: "default", semantic_revision: 0 }, external_actions: [{ kind: reason === "LOCAL_GATE_FAILED" ? "local_gate" : "devspace", status: "failed" }], recovery: { session_authority: "settled", attempt: 0, exact_slug: slug } };
       await new StateStore(workflowPath).write({ ...wfBase, stage: "attention_required", session_authority: "settled", task_outcome: "NOT_EXECUTED", receipts: [receipt2] }, { explicitSettle: true });
       await stateStore.write(failed, { explicitSettle: true });
       return { statePath, state: failed };
@@ -2153,15 +2223,17 @@ ${versionCheck.stderr}`)) throw new Error("ORACLE_VERSION_UNSUPPORTED");
       "--write-output",
       outputPath,
       ...manifest?.model ? ["--model", manifest.model] : [],
-      ...manifest?.model_strategy ? ["--model-strategy", manifest.model_strategy] : [],
-      ...manifest?.research ? ["--research", manifest.research] : [],
-      ...manifest?.archive ? ["--archive", manifest.archive] : [],
-      ...manifest?.copy_profile ? ["--copy-profile", manifest.copy_profile] : [],
+      ...manifest?.model_strategy ? ["--browser-model-strategy", manifest.model_strategy] : [],
+      ...manifest?.research ? ["--browser-research", manifest.research] : [],
+      ...manifest?.archive ? ["--browser-archive", manifest.archive] : [],
       ...(manifest?.attachments ?? []).flatMap((a) => ["--attachment", a]),
-      ...options.oracleArgs ?? []
+      ...manifest?.attachments ? ["--file", ...manifest.attachments] : [],
+      ...manifest?.copy_profile ? ["--copy-profile", manifest.copy_profile] : [],
+      ...oracleArgs
     ];
     const child = execa4(command[0], args, { cwd: root, shell: false, reject: false, env: { ...process.env, ...options.oracleHome ? { ORACLE_HOME: options.oracleHome } : {} } });
-    await stateStore.write({ ...initial, session_authority: "submitted_unknown", transport_status: "pending", process: child.pid ? { pid: child.pid, command: command[0], args } : void 0 }, { explicitSettle: false });
+    const startedAt = (/* @__PURE__ */ new Date()).toISOString();
+    await stateStore.write({ ...initial, session_authority: "submitted_unknown", transport_status: "pending", process: child.pid ? { pid: child.pid, command: command[0], args, cwd: root, started_at: startedAt } : void 0 }, { explicitSettle: false });
     const registry = new ProcessRegistry(path9.join(dir, "processes.json"));
     if (child.pid) await registry.upsert({ id: runId, pid: child.pid, command: command[0], args, cwd: root, project_root: root, run_id: runId, started_at: (/* @__PURE__ */ new Date()).toISOString(), state: "running" });
     const out = await child;
@@ -2190,7 +2262,7 @@ ${versionCheck.stderr}`)) throw new Error("ORACLE_VERSION_UNSUPPORTED");
     const state = { ...initial, session_authority: authority, transport_status: authority === "settled" || authority === "terminal_observed" ? "complete" : out.exitCode === 0 ? "pending" : "failed", task_outcome: outcome, process: child.pid ? { pid: child.pid, command: command[0], args } : void 0, artifacts: { output: outputPath, transcript: path9.join(dir, "transcript.md"), stdout: path9.join(dir, "stdout.log"), stderr: path9.join(dir, "stderr.log"), browser_temp: dir } };
     const settled = authority === "settled";
     const outputSha = sha(durable);
-    const receipt = { receipt_id: randomUUID5(), run_id: runId, stage: "plan", status: settled ? "completed" : "failed", input_sha256: sha(bytes), output_sha256: outputSha, previous_receipt_sha256: null, next_stage: settled ? "complete" : "attention_required", prologue: { project_root: root, mission_sha256: sha(bytes), profile: "default", semantic_revision: 0 }, external_actions: [{ kind: "oracle", status: settled ? "completed" : "failed" }], recovery: { session_authority: authority, attempt: 0, exact_slug: slug } };
+    const receipt = { receipt_id: randomUUID6(), run_id: runId, stage: "plan", status: settled ? "completed" : "failed", input_sha256: sha(bytes), output_sha256: outputSha, previous_receipt_sha256: null, next_stage: settled ? "complete" : "attention_required", prologue: { project_root: root, mission_sha256: sha(bytes), profile: "default", semantic_revision: 0 }, external_actions: [{ kind: "oracle", status: settled ? "completed" : "failed" }], recovery: { session_authority: authority, attempt: 0, exact_slug: slug } };
     await new StateStore(workflowPath).write({ ...wfBase, stage: receipt.next_stage, session_authority: authority, task_outcome: outcome, receipts: [receipt] }, { explicitSettle: settled });
     await stateStore.write(state, { explicitSettle: authority === "settled" });
     return { statePath, state };
@@ -2209,7 +2281,8 @@ async function stopRecorded(statePath) {
   let record = records[0];
   if (records.length === 0 && state.process) {
     const p = state.process;
-    let startedAt = (/* @__PURE__ */ new Date()).toISOString();
+    if (!p.started_at || !p.cwd) throw new Error("STOP_OWNERSHIP_AMBIGUOUS");
+    let startedAt = p.started_at;
     if (process.platform !== "win32") {
       const probe = await execa4("ps", ["-p", String(p.pid), "-o", "lstart="], { reject: false });
       if (probe.exitCode !== 0 || !probe.stdout.trim()) throw new Error("STOP_OWNERSHIP_AMBIGUOUS");
@@ -2222,7 +2295,7 @@ async function stopRecorded(statePath) {
       pid: p.pid,
       command: p.command,
       args: p.args,
-      cwd: state.project_root,
+      cwd: p.cwd,
       project_root: state.project_root,
       run_id: state.run_id,
       started_at: startedAt,
@@ -2233,6 +2306,33 @@ async function stopRecorded(statePath) {
   await terminatePersistedProcess(record);
   const settled = { ...state, session_authority: "settled", transport_status: "failed" };
   await new StateStore(path9.resolve(statePath)).write(settled, { explicitSettle: true });
+  const workflowPath = path9.join(path9.dirname(path9.resolve(statePath)), "workflow.json");
+  try {
+    const workflow = await new StateStore(workflowPath).read();
+    const previous = workflow.receipts.at(-1);
+    if (previous) {
+      const receipt = {
+        receipt_id: randomUUID6(),
+        run_id: workflow.run_id,
+        stage: "recovery",
+        status: "failed",
+        input_sha256: previous.output_sha256,
+        output_sha256: sha("STOP_REQUESTED"),
+        previous_receipt_sha256: receiptSha256(previous),
+        next_stage: "attention_required",
+        prologue: { ...previous.prologue, semantic_revision: workflow.revision + 1 },
+        external_actions: [{ kind: "process", status: "audited" }],
+        recovery: { session_authority: "settled", attempt: previous.recovery.attempt + 1, exact_slug: state.oracle?.slug }
+      };
+      await new StateStore(workflowPath).write({ ...workflow, stage: "attention_required", session_authority: "settled", task_outcome: "NOT_EXECUTED", revision: workflow.revision + 1, receipts: [...workflow.receipts, receipt] }, { explicitSettle: true });
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const lockManager = new LockManager({ projectRoot: state.project_root });
+  if (await lstat5(`${lockManager.getLockPath()}.owner.json`).catch(() => void 0)) {
+    await lockManager.reclaimAbandoned("settled");
+  }
 }
 
 // src/core/forensics/no-submission.ts
@@ -2380,27 +2480,71 @@ async function proveNoSubmission(statePath) {
 }
 
 // src/core/devspace/http-client.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
+import { randomUUID as randomUUID7 } from "node:crypto";
 function createHttpDevSpaceClient(endpoint, fetcher = fetch) {
   const url = new URL(endpoint).toString();
-  async function call(name, args) {
-    const response = await fetcher(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID6(), method: "tools/call", params: { name, arguments: args } })
-    });
-    if (!response.ok) throw new Error(`DEVSPACE_HTTP_${response.status}`);
-    const payload = await response.json();
-    if (payload.error) throw new Error(payload.error.message ?? "DEVSPACE_RPC_ERROR");
-    return payload.result;
+  let session;
+  let initialized = false;
+  const headers = () => ({ "content-type": "application/json", accept: "application/json, text/event-stream", ...session ? { "mcp-session-id": session } : {} });
+  async function parse(r) {
+    const t = await r.text();
+    if ((r.headers.get("content-type") ?? "").includes("text/event-stream")) {
+      for (const l of t.split(/\r?\n/)) if (l.startsWith("data:")) {
+        try {
+          return JSON.parse(l.slice(5).trim());
+        } catch {
+        }
+      }
+      throw Error("DEVSPACE_MALFORMED_SSE");
+    }
+    try {
+      return JSON.parse(t);
+    } catch {
+      throw Error("DEVSPACE_MALFORMED_JSON");
+    }
   }
-  return { open_workspace: (args) => call("open_workspace", args), list_directory: (args) => call("ls", args) };
+  async function req(method, params, notify = false) {
+    const id = notify ? void 0 : randomUUID7();
+    const r = await fetcher(url, { method: "POST", headers: headers(), body: JSON.stringify({ jsonrpc: "2.0", ...id ? { id } : {}, method, ...params === void 0 ? {} : { params } }) });
+    const s = r.headers.get("mcp-session-id");
+    if (s) session = s;
+    if (!r.ok) throw Error(`DEVSPACE_HTTP_${r.status}`);
+    if (notify || r.status === 202 || r.status === 204) return;
+    const x = await parse(r);
+    if (x.error) throw Error(`DEVSPACE_RPC_${x.error.code ?? "ERROR"}:${x.error.message ?? "unknown"}`);
+    return x.result;
+  }
+  async function ensure() {
+    if (initialized) return;
+    await req("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "awgpt", version: "1.0.0" } });
+    await req("notifications/initialized", void 0, true);
+    initialized = true;
+  }
+  async function call(name, args) {
+    await ensure();
+    const result = await req("tools/call", { name, arguments: args });
+    if (result && typeof result === "object" && result.isError) throw Error("DEVSPACE_TOOL_ERROR");
+    const c = result?.content;
+    if (Array.isArray(c)) {
+      const ts = c.filter((x) => !!x && typeof x === "object" && typeof x.text === "string");
+      if (ts.length === 1) {
+        try {
+          return JSON.parse(ts[0].text);
+        } catch {
+          return ts[0].text;
+        }
+      }
+      if (ts.length) return ts.map((x) => x.text).join("\n");
+    }
+    return result;
+  }
+  return { open_workspace: (a) => call("open_workspace", a), list_directory: (a) => call("ls", a) };
 }
 
 // src/core/orchestrator/gate-runner.ts
 import { createHash as createHash7 } from "node:crypto";
 import * as path11 from "node:path";
-import { lstat as lstat7, realpath as realpath2 } from "node:fs/promises";
+import { lstat as lstat7, realpath as realpath3 } from "node:fs/promises";
 import { execa as execa5 } from "execa";
 function sha2563(value) {
   return createHash7("sha256").update(value, "utf8").digest("hex");
@@ -2418,7 +2562,7 @@ async function runLocalGate(request) {
   try {
     const metadata = await lstat7(suppliedRoot);
     if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("GATE_PROJECT_ROOT_INVALID");
-    cwd = await realpath2(suppliedRoot);
+    cwd = await realpath3(suppliedRoot);
   } catch {
     throw new Error("GATE_PROJECT_ROOT_INVALID");
   }
@@ -2636,7 +2780,7 @@ function createCLI() {
     try {
       const client = createHttpDevSpaceClient(options.devspaceUrl);
       const devspace = { qualify: async (root) => {
-        const { qualifyExactProjectRoot: qualifyExactProjectRoot2 } = await import("./qualification-PPG2UOJ3.js");
+        const { qualifyExactProjectRoot: qualifyExactProjectRoot2 } = await import("./qualification-5POFYSVJ.js");
         const result = await qualifyExactProjectRoot2(root, client);
         return { ok: result.ok, reason: result.code };
       } };
@@ -2680,7 +2824,7 @@ function errorCode(error) {
 
 // src/core/orchestrator/state.ts
 import { z as z6 } from "zod";
-var WorkflowState = z6.enum(["plan", "review", "web-multi", "pro", "implementation", "final-web-gate", "complete", "attention_required"]);
+var WorkflowState = z6.enum(["plan", "review", "web-multi", "pro", "implementation", "final-web-gate", "recovery", "complete", "attention_required"]);
 var Transition = z6.object({
   from: WorkflowState,
   to: WorkflowState
@@ -2695,7 +2839,9 @@ var workflowTransitions = [
   { from: "review", to: "implementation" },
   { from: "implementation", to: "final-web-gate" },
   { from: "final-web-gate", to: "complete" },
-  { from: "final-web-gate", to: "implementation" }
+  { from: "final-web-gate", to: "implementation" },
+  { from: "recovery", to: "complete" },
+  { from: "recovery", to: "attention_required" }
 ];
 var validTransitions = workflowTransitions.map((t) => `${t.from}->${t.to}`);
 function isValidTransition(from, to) {
