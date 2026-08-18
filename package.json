@@ -8,6 +8,7 @@
   },
   "files": [
     "dist/",
+    "skills/",
     "contracts/orchestrator/phase5-recovery-v1.json",
     "install-manifest.json",
     "README.md",
@@ -20,9 +21,11 @@
   },
   "scripts": {
     "build": "tsup",
+    "typecheck": "tsc --noEmit",
     "dev": "tsup --watch",
     "test": "vitest",
     "test:run": "vitest run",
+    "pack:check": "npm pack --dry-run",
     "doctor": "node dist/index.js doctor",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "prepack": "npm run build"

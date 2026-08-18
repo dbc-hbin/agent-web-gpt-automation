@@ -5,6 +5,8 @@
     "dist/*.js",
     "dist/*.map",
     "package.json",
+    "skills/*/SKILL.md",
+    "skills/*/agents/openai.yaml",
     "contracts/orchestrator/phase5-recovery-v1.json"
   ]
 }

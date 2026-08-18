@@ -4,6 +4,11 @@ import * as path from 'node:path';
 import writeFileAtomic from 'write-file-atomic';
 import { z } from 'zod';
 
+/** Resolve the packaged source root independently of the caller's cwd. */
+export function resolvePackageSource(metaUrl = import.meta.url): string {
+  return path.resolve(new URL('../../', metaUrl).pathname);
+}
+
 const RECEIPT_SCHEMA = 'codex.chatgpt.install-receipt/v1' as const;
 const WAL_SCHEMA = 'codex.chatgpt.install-wal/v1' as const;
 

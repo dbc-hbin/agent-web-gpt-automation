@@ -1,0 +1,4 @@
+interface:
+  display_name: "ChatGPT Question Designer"
+  short_description: "Design purpose-specific GPT missions for DevSpace, Pro, Deep Research, and Web Multi."
+  default_prompt: "Design a purpose-specific GPT mission using Oracle+DevSpace; default to the highest-tier non-Pro route and select read/write qualified Pro only after explicit user opt-in. Use attachments/ZIP for Deep Research or Pro immutable evidence."

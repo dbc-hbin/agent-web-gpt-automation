@@ -19,6 +19,10 @@ export * from './core/process/auth-preflight.js';
 export * from './core/process/registry.js';
 export * from './core/forensics/no-submission.js';
 export * from './core/forensics/recovery.js';
+export * from './core/context/packer.js';
+export * from './core/workspace/commands.js';
+export * from './core/diagnostics/incident.js';
+export * from './core/orchestration/config.js';
 
 const program = createCLI();
 await program.parseAsync(process.argv);
