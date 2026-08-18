@@ -17,8 +17,17 @@ describe('integration persistence and DevSpace transport', () => {
 
   it('uses JSON-RPC tools/call for exact DevSpace methods', async () => {
     const calls: any[] = [];
-    const client = createHttpDevSpaceClient('http://127.0.0.1:1', async (_u, init) => { calls.push(JSON.parse(String(init?.body))); return new Response(JSON.stringify({result:{allowedRoots:['/tmp/root']}}), {status:200}); });
+    let n=0;
+    const client = createHttpDevSpaceClient('http://127.0.0.1:1', async (_u, init) => { const body=JSON.parse(String(init?.body)); calls.push(body); n++; if(n===1)return new Response(JSON.stringify({result:{protocolVersion:'2025-03-26'}}),{status:200,headers:{'mcp-session-id':'sess'}}); if(n===2)return new Response('',{status:202}); return new Response(JSON.stringify({result:{content:[{type:'text',text:JSON.stringify({allowedRoots:['/tmp/root']})}]}}),{status:200,headers:{'content-type':'application/json'}}); });
     await client.open_workspace({root:'/tmp/root'}); await client.list_directory({path:'/tmp/root'});
-    expect(calls.map(c => c.params.name)).toEqual(['open_workspace','ls']);
+    expect(calls.map(c => c.method)).toEqual(['initialize','notifications/initialized','tools/call','tools/call']);
+    expect(calls[2].params).toEqual({name:'open_workspace',arguments:{root:'/tmp/root'}});
+    expect(calls[3].params.name).toBe('ls');
+    expect(calls[2]).toBeTruthy();
+  });
+
+  it('parses SSE responses and propagates MCP tool errors', async () => {
+    let n=0; const client=createHttpDevSpaceClient('http://mcp',async (_u,init)=>{n++; const b=JSON.parse(String(init?.body)); if(n===1)return new Response('event: message\ndata: {"result":{}}\n\n',{status:200,headers:{'content-type':'text/event-stream','mcp-session-id':'s'}}); if(n===2)return new Response('',{status:202}); expect(b.params.name).toBe('ls'); return new Response('data: {"result":{"isError":true,"content":[]}}\n\n',{status:200,headers:{'content-type':'text/event-stream'}})});
+    await expect(client.list_directory({path:'/tmp'})).rejects.toThrow('DEVSPACE_TOOL_ERROR');
   });
 });
