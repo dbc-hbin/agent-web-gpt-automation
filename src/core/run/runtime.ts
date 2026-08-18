@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { execa } from 'execa';
 import { LockManager } from '../state/locks.js';
 import { ProcessRegistry, terminatePersistedProcess } from '../process/registry.js';
-import { parseTaskOutcome, OracleRunStateSchema, OracleManifestSchema, type OracleRunState, type SessionAuthority } from '../../types/index.js';
+import { parseTaskOutcome, OracleRunStateSchema, OracleManifestSchema, receiptSha256, type OracleRunState, type SessionAuthority, type WorkflowRunState } from '../../types/index.js';
 import { StateStore } from '../state/store.js';
 
 export interface DevSpaceQualifier { qualify(root: string, manifest?: string): Promise<{ ok: boolean; reason?: string }> }
@@ -28,6 +28,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   await mkdir(path.dirname(dir), { recursive: true });
   await mkdir(dir,{recursive:false}).catch((e: any) => { if (e.code === 'EEXIST') throw new Error('RUN_ID_COLLISION'); throw e; });
   const statePath = path.join(dir,'state.json');
+  const workflowPath = path.join(dir,'workflow.json');
   const stateStore = new StateStore(statePath);
   const slug = `run-${sha(bytes).slice(0,4)}-${sha(runId).slice(0,4)}-${sha(root).slice(0,4)}`;
   const command = options.oracleCommand ?? ['oracle'];
@@ -37,6 +38,8 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   let retainLock = false;
   try {
     await stateStore.write(initial);
+    const wfBase: WorkflowRunState = { schema:'codex.chatgpt.oracle-workflow/v1', run_id:runId, project_root:root, mission_path:mission, profile:'default', stage:'plan', session_authority:'pre_submit', task_outcome:'pending', revision:0, receipts:[] };
+    await new StateStore(workflowPath).write(wfBase);
     if (options.devspace) { const q=await options.devspace.qualify(root, options.manifestPath); if (!q.ok) { const failed={...initial,session_authority:'settled' as SessionAuthority,transport_status:'failed' as const}; await stateStore.write(failed, { explicitSettle: true }); return {statePath,state:failed}; } }
     if (options.localGate) { const gate=await execa(options.localGate[0], options.localGate.slice(1),{cwd:root,shell:false,reject:false}); if (gate.exitCode!==0) throw new Error('LOCAL_GATE_FAILED'); }
     const args=[...command.slice(1), '--engine','browser','--slug',slug,'--prompt',bytes.toString('utf8'),'--write-output',outputPath, ...(options.oracleArgs??[])];
@@ -54,6 +57,8 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
     await writeFile(path.join(dir,'transcript.md'), stdout);
     retainLock = ['submitted_unknown','live','terminal_observed'].includes(authority);
     const state: OracleRunState={...initial,session_authority:authority,transport_status:authority === 'terminal_observed' ? 'complete' : out.exitCode===0?'pending':'failed',task_outcome:outcome,artifacts:{output:outputPath,transcript:path.join(dir,'transcript.md'),stdout:path.join(dir,'stdout.log'),stderr:path.join(dir,'stderr.log'),browser_temp:dir}};
+    const outputSha = sha(durable); const receipt = { receipt_id: randomUUID(), run_id: runId, stage:'plan' as const, status: authority==='terminal_observed'?'completed' as const:'failed' as const, input_sha256: sha(bytes), output_sha256: outputSha, previous_receipt_sha256:null, next_stage: authority==='terminal_observed'?'complete' as const:'attention_required' as const, prologue:{project_root:root,mission_sha256:sha(bytes),profile:'default' as const,semantic_revision:0}, external_actions:[{kind:'oracle' as const,status: authority==='terminal_observed'?'completed' as const:'failed' as const}], recovery:{session_authority:authority,attempt:0,exact_slug:slug} };
+    await new StateStore(workflowPath).write({...wfBase, stage:receipt.next_stage, session_authority:authority, task_outcome:outcome, receipts:[receipt]});
     await stateStore.write(state); return {statePath,state};
   } finally { if (!retainLock) await release(); }
 }
