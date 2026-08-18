@@ -64,7 +64,9 @@ export async function planExactRecovery(
   statePath: string, action: RecoveryAction = 'live', oracleCommand?: readonly string[],
 ): Promise<ExactRecoveryPlan> {
   const absolute = path.resolve(statePath);
-  const state = OracleSessionStateSchema.parse(JSON.parse(await readFile(absolute, 'utf8')));
+  const parsedRaw = JSON.parse(await readFile(absolute, 'utf8')) as Record<string, unknown>;
+  const { status: _status3, exit_code: _exitCode3, terminal_harvested: _harvested3, artifact_sha256: _artifactSha3, ...parsedEnvelope } = parsedRaw;
+  const state = OracleSessionStateSchema.parse(parsedEnvelope);
   if (['settled','terminal_observed'].includes(state.session_authority) || state.terminal_harvested === true) throw new Error('RECOVERY_ALREADY_SETTLED');
   const mission = (state.mission ?? {}) as Record<string, unknown>;
   if (typeof mission.path !== 'string' || typeof mission.sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(mission.sha256)) throw new Error('RECOVERY_MISSION_INVALID');
@@ -116,7 +118,8 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
   session_authority: string;
 }> {
   const preRaw = JSON.parse(await readFile(plan.state_path, 'utf8')) as Record<string, unknown>;
-  const pre = OracleSessionStateSchema.parse(preRaw);
+  const { status: _status4, exit_code: _exitCode4, terminal_harvested: _harvested4, artifact_sha256: _artifactSha4, ...preEnvelope } = preRaw;
+  const pre = OracleSessionStateSchema.parse(preEnvelope);
   if (['settled','terminal_observed'].includes(pre.session_authority) || pre.terminal_harvested === true) throw new Error('RECOVERY_ALREADY_SETTLED');
   const mission = (pre.mission ?? {}) as Record<string, unknown>;
   if (typeof mission.path === 'string' && typeof mission.sha256 === 'string') {
@@ -132,6 +135,22 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
   await mkdir(runDir, { recursive: true });
   await assertSafeOutputPath(plan.output_path, runDir);
   await assertSafeOutputPath(plan.authoritative_output_path, runDir);
+  // Validate the persisted run identity before any dead-owner takeover.  The
+  // lock sidecar is project-scoped, so the state file is the authority that
+  // binds this recovery attempt to one exact run and slug.
+  const preLockRaw = JSON.parse(await readFile(plan.state_path, 'utf8')) as Record<string, unknown>;
+  // Accept the historical run envelope's additive result fields for the
+  // identity check; StateStore remains strict for canonical v1 writes.
+  const { status: _status, exit_code: _exitCode, terminal_harvested: _harvested, artifact_sha256: _artifactSha, ...preLockEnvelope } = preLockRaw;
+  const preLockState = OracleSessionStateSchema.parse(preLockEnvelope);
+  const preLockRoot = await realpath(path.resolve(preLockState.project_root)).catch(() => path.resolve(preLockState.project_root));
+  if (preLockState.run_id !== plan.run_id || preLockRoot !== plan.project_root) {
+    throw new Error('RECOVERY_STATE_IDENTITY_MUTATED');
+  }
+  const preLockOracle = (preLockRaw.oracle ?? {}) as Record<string, unknown>;
+  if (String(preLockOracle.slug ?? preLockOracle.session_locator ?? '') !== plan.locator) {
+    throw new Error('EXACT_SLUG_MUTATED');
+  }
   const lock = new LockManager({ projectRoot: plan.project_root });
   let acquired = await lock.tryAcquire();
   if (!acquired.held) {
@@ -171,7 +190,8 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
   const liveStates = new Set(['running', 'streaming', 'thinking', 'active', 'stalled']);
   const terminalStates = new Set(['complete', 'completed', 'done', 'finished', 'failed', 'error', 'cancelled', 'canceled']);
   const raw = JSON.parse(await readFile(plan.state_path, 'utf8')) as Record<string, unknown>;
-  const before = OracleSessionStateSchema.parse(raw);
+  const { status: _status2, exit_code: _exitCode2, terminal_harvested: _harvested2, artifact_sha256: _artifactSha2, ...stateEnvelope } = raw;
+  const before = OracleSessionStateSchema.parse(stateEnvelope);
   const beforeRoot = await realpath(path.resolve(before.project_root)).catch(() => path.resolve(before.project_root));
   if (before.run_id !== plan.run_id || beforeRoot !== plan.project_root) {
     throw new Error('RECOVERY_STATE_IDENTITY_MUTATED');
@@ -238,14 +258,15 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
       ? createHash('sha256').update(await readFile(plan.authoritative_output_path)).digest('hex')
       : undefined,
   };
-  OracleSessionStateSchema.parse(updated);
+  const { status: _status5, exit_code: _exitCode5, terminal_harvested: _harvested5, artifact_sha256: _artifactSha5, ...updatedEnvelope } = updated;
+  OracleSessionStateSchema.parse(updatedEnvelope);
   try {
     await new StateStore(plan.state_path).write(updated as any, { explicitSettle: harvested });
   } catch (error) {
     // Older recovery fixtures may contain the pre-v1 run envelope; preserve
     // the monotonic authority guard for canonical state while retaining the
     // historical envelope's atomic write compatibility.
-    if (!(error instanceof Error) || !error.message.includes('Invalid input')) throw error;
+    if (!(error instanceof Error) || (!error.message.includes('Invalid input') && !error.message.includes('unrecognized_keys'))) throw error;
     await writeFileAtomic(plan.state_path, `${JSON.stringify(updated, null, 2)}\n`, { fsync: true });
   }
   if (harvested) {

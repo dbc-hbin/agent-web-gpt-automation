@@ -406,8 +406,8 @@ var LockManager = class {
     if (!release) return;
     await release();
   }
-  async reclaimAbandoned(sessionAuthority) {
-    if (sessionAuthority !== "settled") {
+  async reclaimAbandoned(sessionAuthority, options = {}) {
+    if (sessionAuthority !== "settled" && !options.recoveryTakeover) {
       throw new Error(`PROJECT_LOCK_RECLAIM_FORBIDDEN: ${sessionAuthority}`);
     }
     if (this.ownedRelease) throw new Error("PROJECT_LOCK_OWNER_STILL_ALIVE");
@@ -440,6 +440,7 @@ var LockManager = class {
     const quarantine = `${this.lockPath}.reclaim-${crypto.randomUUID()}`;
     let quarantined = false;
     try {
+      if (await readFile(ownerPath, "utf8") !== ownerBytes) throw new Error("PROJECT_LOCK_OWNER_CHANGED");
       await rename(lockDirectory, quarantine);
       quarantined = true;
     } catch (error) {
@@ -454,10 +455,15 @@ var LockManager = class {
       return;
     }
     try {
+      const currentOwner = JSON.parse(await readFile(ownerPath, "utf8"));
+      if (currentOwner.token !== owner.token) {
+        await rm(quarantine, { recursive: true, force: true });
+        throw new Error("PROJECT_LOCK_OWNER_CHANGED");
+      }
       await rm(quarantine, { recursive: true, force: false });
       try {
-        const currentOwner = JSON.parse(await readFile(ownerPath, "utf8"));
-        if (currentOwner.token === owner.token) await rm(ownerPath, { force: true });
+        const currentOwner2 = JSON.parse(await readFile(ownerPath, "utf8"));
+        if (currentOwner2.token === owner.token) await rm(ownerPath, { force: true });
       } catch {
       }
     } catch (error) {
@@ -672,6 +678,20 @@ var StateStore = class {
 };
 
 // src/core/forensics/recovery.ts
+async function assertSafeOutputPath(target, root) {
+  const absolute = path3.resolve(target);
+  const rel = path3.relative(path3.resolve(root), absolute);
+  if (!rel || rel.startsWith("..") || path3.isAbsolute(rel)) throw new Error("RECOVERY_OUTPUT_OUTSIDE_RUN");
+  let cursor = path3.dirname(absolute);
+  while (cursor !== path3.dirname(cursor)) {
+    const stat = await lstat(cursor).catch(() => void 0);
+    if (stat?.isSymbolicLink() || stat && !stat.isDirectory()) throw new Error("RECOVERY_OUTPUT_PARENT_INVALID");
+    if (cursor === path3.resolve(root)) break;
+    cursor = path3.dirname(cursor);
+  }
+  const existing = await lstat(absolute).catch(() => void 0);
+  if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error("RECOVERY_OUTPUT_INVALID");
+}
 function validateOracleCommand(command) {
   if (!command.length || command.some((part) => !part)) throw new Error("ORACLE_COMMAND_INVALID");
   const executable = path3.basename(command[0]).toLowerCase();
@@ -697,7 +717,9 @@ function recoveryArgv(command, locator, action, outputPath) {
 }
 async function planExactRecovery(statePath, action = "live", oracleCommand) {
   const absolute = path3.resolve(statePath);
-  const state = OracleSessionStateSchema.parse(JSON.parse(await readFile4(absolute, "utf8")));
+  const parsedRaw = JSON.parse(await readFile4(absolute, "utf8"));
+  const { status: _status3, exit_code: _exitCode3, terminal_harvested: _harvested3, artifact_sha256: _artifactSha3, ...parsedEnvelope } = parsedRaw;
+  const state = OracleSessionStateSchema.parse(parsedEnvelope);
   if (["settled", "terminal_observed"].includes(state.session_authority) || state.terminal_harvested === true) throw new Error("RECOVERY_ALREADY_SETTLED");
   const mission = state.mission ?? {};
   if (typeof mission.path !== "string" || typeof mission.sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(mission.sha256)) throw new Error("RECOVERY_MISSION_INVALID");
@@ -726,6 +748,8 @@ async function planExactRecovery(statePath, action = "live", oracleCommand) {
   if (!relativeOutput || relativeOutput.startsWith("..") || path3.isAbsolute(relativeOutput)) {
     throw new Error("RECOVERY_OUTPUT_OUTSIDE_RUN");
   }
+  await assertSafeOutputPath(outputPath, runDir);
+  await assertSafeOutputPath(authoritativeOutput, runDir);
   return {
     run_id: state.run_id,
     project_root: root,
@@ -739,7 +763,8 @@ async function planExactRecovery(statePath, action = "live", oracleCommand) {
 }
 async function executeExactRecovery(plan) {
   const preRaw = JSON.parse(await readFile4(plan.state_path, "utf8"));
-  const pre = OracleSessionStateSchema.parse(preRaw);
+  const { status: _status4, exit_code: _exitCode4, terminal_harvested: _harvested4, artifact_sha256: _artifactSha4, ...preEnvelope } = preRaw;
+  const pre = OracleSessionStateSchema.parse(preEnvelope);
   if (["settled", "terminal_observed"].includes(pre.session_authority) || pre.terminal_harvested === true) throw new Error("RECOVERY_ALREADY_SETTLED");
   const mission = pre.mission ?? {};
   if (typeof mission.path === "string" && typeof mission.sha256 === "string") {
@@ -754,144 +779,177 @@ async function executeExactRecovery(plan) {
   } else throw new Error("RECOVERY_MISSION_INVALID");
   const runDir = path3.dirname(plan.output_path);
   await mkdir3(runDir, { recursive: true });
-  const stdoutPath = path3.join(runDir, `recovery-${plan.action}-stdout.log`);
-  const stderrPath = path3.join(runDir, `recovery-${plan.action}-stderr.log`);
-  const [command, ...args] = plan.argv;
-  const result = await execa2(command, args, {
-    cwd: plan.project_root,
-    reject: false,
-    shell: false,
-    stdin: "ignore",
-    env: { ...process.env }
-  });
-  await Promise.all([
-    writeFile(`${stdoutPath}.tmp`, result.stdout, "utf8").then(() => rename2(`${stdoutPath}.tmp`, stdoutPath)),
-    writeFile(`${stderrPath}.tmp`, result.stderr, "utf8").then(() => rename2(`${stderrPath}.tmp`, stderrPath))
-  ]);
-  const output = await readFile4(plan.output_path).catch(() => Buffer.alloc(0));
-  const stdout = result.stdout ?? "";
-  const states = [...stdout.matchAll(/^\s*State:\s*([a-z][a-z0-9_-]*)\s*$/gim)];
-  const observedState = states.at(-1)?.[1].toLowerCase();
-  const urls = [...stdout.matchAll(/^\s*URL:\s*(https:\/\/chatgpt\.com\/c\/[^\s?#]+)\s*$/gim)];
-  const observedUrl = urls.at(-1)?.[1];
-  const liveStates = /* @__PURE__ */ new Set(["running", "streaming", "thinking", "active", "stalled"]);
-  const terminalStates = /* @__PURE__ */ new Set(["complete", "completed", "done", "finished", "failed", "error", "cancelled", "canceled"]);
-  const raw = JSON.parse(await readFile4(plan.state_path, "utf8"));
-  const before = OracleSessionStateSchema.parse(raw);
-  const beforeRoot = await realpath(path3.resolve(before.project_root)).catch(() => path3.resolve(before.project_root));
-  if (before.run_id !== plan.run_id || beforeRoot !== plan.project_root) {
+  await assertSafeOutputPath(plan.output_path, runDir);
+  await assertSafeOutputPath(plan.authoritative_output_path, runDir);
+  const preLockRaw = JSON.parse(await readFile4(plan.state_path, "utf8"));
+  const { status: _status, exit_code: _exitCode, terminal_harvested: _harvested, artifact_sha256: _artifactSha, ...preLockEnvelope } = preLockRaw;
+  const preLockState = OracleSessionStateSchema.parse(preLockEnvelope);
+  const preLockRoot = await realpath(path3.resolve(preLockState.project_root)).catch(() => path3.resolve(preLockState.project_root));
+  if (preLockState.run_id !== plan.run_id || preLockRoot !== plan.project_root) {
     throw new Error("RECOVERY_STATE_IDENTITY_MUTATED");
   }
-  const oracle = { ...raw.oracle ?? {} };
-  if (String(oracle.slug ?? oracle.session_locator ?? "") !== plan.locator) throw new Error("EXACT_SLUG_MUTATED");
-  const priorAuthority = before.session_authority === "terminal" ? "terminal_observed" : before.session_authority;
-  const persistedUrl = String(oracle.conversation_url ?? "").trim();
-  if (persistedUrl && observedUrl && persistedUrl !== observedUrl) throw new Error("RECOVERY_CONVERSATION_URL_CONFLICT");
-  if (observedUrl) oracle.conversation_url = observedUrl;
-  let status = "attention_required";
-  let authority = priorAuthority;
-  let taskOutcome = String(raw.task_outcome ?? "pending");
-  let harvested = false;
-  if (observedState && liveStates.has(observedState)) {
-    if (["terminal_observed", "settled"].includes(priorAuthority)) {
-      status = "attention_required";
-    } else {
-      authority = "live";
-      status = "session_live";
+  const preLockOracle = preLockRaw.oracle ?? {};
+  if (String(preLockOracle.slug ?? preLockOracle.session_locator ?? "") !== plan.locator) {
+    throw new Error("EXACT_SLUG_MUTATED");
+  }
+  const lock4 = new LockManager({ projectRoot: plan.project_root });
+  let acquired = await lock4.tryAcquire();
+  if (!acquired.held) {
+    await lock4.reclaimAbandoned("submitted_unknown", { recoveryTakeover: true });
+    acquired = await lock4.tryAcquire();
+  }
+  if (!acquired.held) throw new Error("RECOVERY_PROJECT_LOCK_HELD");
+  const release = acquired.release;
+  try {
+    const stdoutPath = path3.join(runDir, `recovery-${plan.action}-stdout.log`);
+    const stderrPath = path3.join(runDir, `recovery-${plan.action}-stderr.log`);
+    const [command, ...args] = plan.argv;
+    const result = await execa2(command, args, {
+      cwd: plan.project_root,
+      reject: false,
+      shell: false,
+      stdin: "ignore",
+      env: { ...process.env }
+    });
+    await Promise.all([
+      writeFile(`${stdoutPath}.tmp`, result.stdout, "utf8").then(() => rename2(`${stdoutPath}.tmp`, stdoutPath)),
+      writeFile(`${stderrPath}.tmp`, result.stderr, "utf8").then(() => rename2(`${stderrPath}.tmp`, stderrPath))
+    ]);
+    const candidateStat = await lstat(plan.output_path).catch(() => void 0);
+    if (candidateStat && (!candidateStat.isFile() || candidateStat.isSymbolicLink())) throw new Error("RECOVERY_OUTPUT_INVALID");
+    const output = candidateStat ? await readFile4(plan.output_path) : Buffer.alloc(0);
+    const stdout = result.stdout ?? "";
+    const states = [...stdout.matchAll(/^\s*State:\s*([a-z][a-z0-9_-]*)\s*$/gim)];
+    const observedState = states.at(-1)?.[1].toLowerCase();
+    const urls = [...stdout.matchAll(/^\s*URL:\s*(https:\/\/chatgpt\.com\/c\/[^\s?#]+)\s*$/gim)];
+    const observedUrl = urls.at(-1)?.[1];
+    const liveStates = /* @__PURE__ */ new Set(["running", "streaming", "thinking", "active", "stalled"]);
+    const terminalStates = /* @__PURE__ */ new Set(["complete", "completed", "done", "finished", "failed", "error", "cancelled", "canceled"]);
+    const raw = JSON.parse(await readFile4(plan.state_path, "utf8"));
+    const { status: _status2, exit_code: _exitCode2, terminal_harvested: _harvested2, artifact_sha256: _artifactSha2, ...stateEnvelope } = raw;
+    const before = OracleSessionStateSchema.parse(stateEnvelope);
+    const beforeRoot = await realpath(path3.resolve(before.project_root)).catch(() => path3.resolve(before.project_root));
+    if (before.run_id !== plan.run_id || beforeRoot !== plan.project_root) {
+      throw new Error("RECOVERY_STATE_IDENTITY_MUTATED");
     }
-  } else if (observedState && terminalStates.has(observedState)) {
-    let semanticOutput = false;
-    if (result.exitCode === 0 && output.length > 0) {
-      try {
-        const contract = String(raw.task_outcome_contract ?? "legacy");
-        if (contract === "v1") {
-          const parsed = parseTaskOutcome(new TextDecoder("utf-8", { fatal: true }).decode(output));
-          taskOutcome = parsed.outcome;
-        } else {
-          taskOutcome = "legacy_unclassified";
+    const oracle = { ...raw.oracle ?? {} };
+    if (String(oracle.slug ?? oracle.session_locator ?? "") !== plan.locator) throw new Error("EXACT_SLUG_MUTATED");
+    const priorAuthority = before.session_authority === "terminal" ? "terminal_observed" : before.session_authority;
+    const persistedUrl = String(oracle.conversation_url ?? "").trim();
+    if (persistedUrl && observedUrl && persistedUrl !== observedUrl) throw new Error("RECOVERY_CONVERSATION_URL_CONFLICT");
+    if (observedUrl) oracle.conversation_url = observedUrl;
+    let status = "attention_required";
+    let authority = priorAuthority;
+    let taskOutcome = String(raw.task_outcome ?? "pending");
+    let harvested = false;
+    if (observedState && liveStates.has(observedState)) {
+      if (["terminal_observed", "settled"].includes(priorAuthority)) {
+        status = "attention_required";
+      } else {
+        authority = "live";
+        status = "session_live";
+      }
+    } else if (observedState && terminalStates.has(observedState)) {
+      let semanticOutput = false;
+      if (result.exitCode === 0 && output.length > 0) {
+        try {
+          const contract = String(raw.task_outcome_contract ?? "legacy");
+          if (contract === "v1") {
+            const parsed = parseTaskOutcome(new TextDecoder("utf-8", { fatal: true }).decode(output));
+            taskOutcome = parsed.outcome;
+          } else {
+            taskOutcome = "legacy_unclassified";
+          }
+          semanticOutput = true;
+        } catch {
+          semanticOutput = false;
         }
-        semanticOutput = true;
-      } catch {
-        semanticOutput = false;
+      }
+      if (semanticOutput) {
+        const destinationStat = await lstat(plan.authoritative_output_path).catch(() => void 0);
+        if (destinationStat && (!destinationStat.isFile() || destinationStat.isSymbolicLink())) throw new Error("RECOVERY_OUTPUT_INVALID");
+        if (destinationStat) throw new Error("RECOVERY_OUTPUT_ALREADY_AUTHORITATIVE");
+        await rename2(plan.output_path, plan.authoritative_output_path);
+        authority = "settled";
+        status = ["EXECUTED", "legacy_unclassified"].includes(taskOutcome) ? "complete" : "attention_required";
+        harvested = true;
+      } else {
+        await rm2(plan.output_path, { force: true });
+        authority = priorAuthority === "settled" ? "settled" : "terminal_observed";
+        status = "terminal_observed";
       }
     }
-    if (semanticOutput) {
-      const destinationStat = await lstat(plan.authoritative_output_path).catch(() => void 0);
-      if (destinationStat?.isSymbolicLink()) throw new Error("RECOVERY_OUTPUT_SYMLINK_FORBIDDEN");
-      if (destinationStat) throw new Error("RECOVERY_OUTPUT_ALREADY_AUTHORITATIVE");
-      await rename2(plan.output_path, plan.authoritative_output_path);
-      authority = "settled";
-      status = ["EXECUTED", "legacy_unclassified"].includes(taskOutcome) ? "complete" : "attention_required";
-      harvested = true;
-    } else {
-      await rm2(plan.output_path, { force: true });
-      authority = priorAuthority === "settled" ? "settled" : "terminal_observed";
-      status = "terminal_observed";
-    }
-  }
-  const updated = {
-    ...raw,
-    oracle,
-    status: status === "session_live" ? "running" : status === "complete" ? "complete" : "attention_required",
-    exit_code: result.exitCode ?? 1,
-    session_authority: authority,
-    terminal_harvested: harvested,
-    transport_status: harvested ? "complete" : status === "session_live" ? "pending" : "failed",
-    task_outcome: harvested ? taskOutcome : "pending",
-    artifact_sha256: harvested ? createHash3("sha256").update(await readFile4(plan.authoritative_output_path)).digest("hex") : void 0
-  };
-  OracleSessionStateSchema.parse(updated);
-  await writeFileAtomic4(plan.state_path, `${JSON.stringify(updated, null, 2)}
+    const updated = {
+      ...raw,
+      oracle,
+      status: status === "session_live" ? "running" : status === "complete" ? "complete" : "attention_required",
+      exit_code: result.exitCode ?? 1,
+      session_authority: authority,
+      terminal_harvested: harvested,
+      transport_status: harvested ? "complete" : status === "session_live" ? "pending" : "failed",
+      task_outcome: harvested ? taskOutcome : "pending",
+      artifact_sha256: harvested ? createHash3("sha256").update(await readFile4(plan.authoritative_output_path)).digest("hex") : void 0
+    };
+    const { status: _status5, exit_code: _exitCode5, terminal_harvested: _harvested5, artifact_sha256: _artifactSha5, ...updatedEnvelope } = updated;
+    OracleSessionStateSchema.parse(updatedEnvelope);
+    try {
+      await new StateStore(plan.state_path).write(updated, { explicitSettle: harvested });
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("Invalid input") && !error.message.includes("unrecognized_keys")) throw error;
+      await writeFileAtomic4(plan.state_path, `${JSON.stringify(updated, null, 2)}
 `, { fsync: true });
-  if (harvested) {
-    const workflowPath = path3.join(path3.dirname(plan.state_path), "workflow.json");
-    const workflowRaw = await readFile4(workflowPath, "utf8").catch(() => void 0);
-    if (!workflowRaw) {
-      return {
-        exit_code: result.exitCode ?? 1,
-        stdout_path: stdoutPath,
-        stderr_path: stderrPath,
-        output_nonempty: harvested,
-        status,
-        session_authority: authority
-      };
     }
-    const workflow = WorkflowRunStateSchema.parse(JSON.parse(workflowRaw));
-    const previous = workflow.receipts.at(-1);
-    if (!previous) throw new Error("RECOVERY_WORKFLOW_MISSING_RECEIPT");
-    const artifactHash = String(updated.artifact_sha256);
-    const receipt = {
-      receipt_id: randomUUID2(),
-      run_id: workflow.run_id,
-      stage: "recovery",
-      status: "completed",
-      input_sha256: previous.output_sha256,
-      output_sha256: artifactHash,
-      previous_receipt_sha256: receiptSha256(previous),
-      next_stage: status === "complete" ? "complete" : "attention_required",
-      prologue: { ...previous.prologue, semantic_revision: previous.prologue.semantic_revision + 1 },
-      external_actions: [{ kind: "oracle", status: "completed" }],
-      recovery: { session_authority: "settled", attempt: previous.recovery.attempt + 1, exact_slug: plan.locator }
+    if (harvested) {
+      const workflowPath = path3.join(path3.dirname(plan.state_path), "workflow.json");
+      const workflowRaw = await readFile4(workflowPath, "utf8").catch(() => void 0);
+      if (!workflowRaw) {
+        return {
+          exit_code: result.exitCode ?? 1,
+          stdout_path: stdoutPath,
+          stderr_path: stderrPath,
+          output_nonempty: harvested,
+          status,
+          session_authority: authority
+        };
+      }
+      const workflow = WorkflowRunStateSchema.parse(JSON.parse(workflowRaw));
+      const previous = workflow.receipts.at(-1);
+      if (!previous) throw new Error("RECOVERY_WORKFLOW_MISSING_RECEIPT");
+      const artifactHash = String(updated.artifact_sha256);
+      const receipt = {
+        receipt_id: randomUUID2(),
+        run_id: workflow.run_id,
+        stage: "recovery",
+        status: "completed",
+        input_sha256: previous.output_sha256,
+        output_sha256: artifactHash,
+        previous_receipt_sha256: receiptSha256(previous),
+        next_stage: status === "complete" ? "complete" : "attention_required",
+        prologue: { ...previous.prologue, semantic_revision: previous.prologue.semantic_revision + 1 },
+        external_actions: [{ kind: "oracle", status: "completed" }],
+        recovery: { session_authority: "settled", attempt: previous.recovery.attempt + 1, exact_slug: plan.locator }
+      };
+      const next = {
+        ...workflow,
+        stage: receipt.next_stage,
+        session_authority: "settled",
+        task_outcome: taskOutcome,
+        revision: workflow.revision + 1,
+        receipts: [...workflow.receipts, receipt]
+      };
+      await new StateStore(workflowPath).write(next, { explicitSettle: true });
+    }
+    return {
+      exit_code: result.exitCode ?? 1,
+      stdout_path: stdoutPath,
+      stderr_path: stderrPath,
+      output_nonempty: harvested,
+      status,
+      session_authority: authority
     };
-    const next = {
-      ...workflow,
-      stage: receipt.next_stage,
-      session_authority: "settled",
-      task_outcome: taskOutcome,
-      revision: workflow.revision + 1,
-      receipts: [...workflow.receipts, receipt]
-    };
-    await new StateStore(workflowPath).write(next, { explicitSettle: true });
-    await new LockManager({ projectRoot: plan.project_root }).reclaimAbandoned("settled");
+  } finally {
+    await release();
   }
-  return {
-    exit_code: result.exitCode ?? 1,
-    stdout_path: stdoutPath,
-    stderr_path: stderrPath,
-    output_nonempty: harvested,
-    status,
-    session_authority: authority
-  };
 }
 
 // src/cli/doctor.ts
@@ -2159,6 +2217,20 @@ async function exactFile(p) {
   new TextDecoder("utf-8", { fatal: true }).decode(b);
   return b;
 }
+async function assertSafeOutput(p, root) {
+  const abs = path9.resolve(p);
+  const rel = path9.relative(path9.resolve(root), abs);
+  if (!rel || rel.startsWith("..") || path9.isAbsolute(rel)) throw new Error("OUTPUT_PATH_INVALID");
+  let c = path9.dirname(abs);
+  while (c !== path9.dirname(c)) {
+    const s2 = await lstat5(c).catch(() => void 0);
+    if (s2?.isSymbolicLink() || s2 && !s2.isDirectory()) throw new Error("OUTPUT_PARENT_INVALID");
+    if (c === path9.resolve(root)) break;
+    c = path9.dirname(c);
+  }
+  const s = await lstat5(abs).catch(() => void 0);
+  if (s && (!s.isFile() || s.isSymbolicLink())) throw new Error("OUTPUT_PATH_INVALID");
+}
 async function runOracle(options) {
   const root = await exactDir(options.projectRoot);
   const requestedMission = path9.resolve(options.missionPath);
@@ -2203,6 +2275,7 @@ async function runOracle(options) {
 ${versionCheck.stderr}`.trim();
   if (versionCheck.exitCode !== 0 || !/^0\.17\.1$/.test(version)) throw new Error("ORACLE_VERSION_UNSUPPORTED");
   const outputPath = path9.join(dir, "output.md");
+  await assertSafeOutput(outputPath, dir);
   if (manifest?.copy_profile) {
     const s = await lstat5(manifest.copy_profile).catch(() => void 0);
     if (!s || s.isSymbolicLink() || !s.isDirectory()) throw new Error("COPY_PROFILE_INVALID");
@@ -2267,7 +2340,9 @@ ${versionCheck.stderr}`.trim();
     const stderr = out.stderr ?? "";
     await writeFile2(path9.join(dir, "stdout.log"), stdout);
     await writeFile2(path9.join(dir, "stderr.log"), stderr);
-    const durable = await readFile9(outputPath).catch(() => Buffer.from(""));
+    const outputStat = await lstat5(outputPath).catch(() => void 0);
+    if (outputStat && (!outputStat.isFile() || outputStat.isSymbolicLink())) throw new Error("OUTPUT_PATH_INVALID");
+    const durable = outputStat ? await readFile9(outputPath) : Buffer.from("");
     let outcome = "pending";
     let authority = out.exitCode === 0 ? "terminal_observed" : "submitted_unknown";
     if (out.exitCode === 0) {
@@ -2304,13 +2379,19 @@ async function stopRecorded(statePath) {
   if (records.length === 0 && state.process) {
     const p = state.process;
     if (!p.started_at || !p.cwd) throw new Error("STOP_OWNERSHIP_AMBIGUOUS");
-    let startedAt = p.started_at;
     if (process.platform !== "win32") {
-      const probe = await execa4("ps", ["-p", String(p.pid), "-o", "lstart="], { reject: false });
+      const probe = await execa4("ps", ["-p", String(p.pid), "-o", "lstart=", "-o", "command="], { reject: false });
       if (probe.exitCode !== 0 || !probe.stdout.trim()) throw new Error("STOP_OWNERSHIP_AMBIGUOUS");
-      const observed = Date.parse(probe.stdout.trim());
+      const line = probe.stdout.trim();
+      const observed = Date.parse(line.slice(0, 24));
       if (!Number.isFinite(observed)) throw new Error("STOP_OWNERSHIP_AMBIGUOUS");
-      startedAt = new Date(observed).toISOString();
+      if (Math.abs(observed - Date.parse(p.started_at)) > 2e3) throw new Error("STOP_OWNERSHIP_AMBIGUOUS");
+      const expectedCommand = [p.command, ...p.args].join(" ").replace(/\s+/g, " ").trim();
+      const observedCommand = line.slice(24).replace(/\s+/g, " ").trim();
+      if (!observedCommand || observedCommand !== expectedCommand) throw new Error("STOP_OWNERSHIP_AMBIGUOUS");
+      const cwdProbe = await execa4("lsof", ["-a", "-p", String(p.pid), "-d", "cwd", "-Fn"], { reject: false });
+      const observedCwd = cwdProbe.exitCode === 0 ? cwdProbe.stdout.split("\n").find((v) => v.startsWith("n"))?.slice(1) : void 0;
+      if (!observedCwd || await realpath2(observedCwd).catch(() => "") !== await realpath2(p.cwd).catch(() => "")) throw new Error("STOP_OWNERSHIP_AMBIGUOUS");
     }
     record = {
       id: state.run_id,
@@ -2320,7 +2401,7 @@ async function stopRecorded(statePath) {
       cwd: p.cwd,
       project_root: state.project_root,
       run_id: state.run_id,
-      started_at: startedAt,
+      started_at: p.started_at,
       state: "running"
     };
   }
