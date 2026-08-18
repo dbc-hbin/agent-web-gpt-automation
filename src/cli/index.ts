@@ -108,11 +108,10 @@ export function createCLI(): Command {
     });
 
   const workspace = program.command('workspace').description('Configure and inspect the exact DevSpace workspace');
-  for (const action of ['setup', 'doctor'] as const) {
-    workspace.command(action)
-      .description(action === 'setup' ? 'Preview workspace commands (use --apply to execute)' : 'Run workspace checks')
+  workspace.command('setup')
+      .description('Preview workspace checks (use --apply to execute)')
       .option('--root <path>', 'exact project root', process.cwd())
-      .option('--apply', 'execute commands; preview is the default')
+      .option('--apply', 'execute the bounded setup commands')
       .action(async options => {
         try {
           const result = await setupWorkspace({ root: options.root, apply: Boolean(options.apply), runner: localCommandRunner });
@@ -120,7 +119,16 @@ export function createCLI(): Command {
           if (result.status === 'BLOCKED') process.exitCode = 2;
         } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }
       });
-  }
+  workspace.command('doctor')
+      .description('Run read-only workspace checks')
+      .option('--root <path>', 'exact project root', process.cwd())
+      .action(async options => {
+        try {
+          const result = await setupWorkspace({ root: options.root, dryRun: false, runner: localCommandRunner });
+          console.log(JSON.stringify(result, null, 2));
+          if (result.status === 'BLOCKED') process.exitCode = 2;
+        } catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }
+      });
 
   program
     .command('auth-preflight')

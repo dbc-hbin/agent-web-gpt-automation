@@ -5,40 +5,26 @@ description: Part of the current Oracle path, perform the one-time, user-authori
 
 # ChatGPT Workspace Setup
 
-Use this skill only for a first connection, an explicitly requested DevSpace/tunnel repair, or a read-only endpoint diagnosis. Ordinary ChatGPT modes must not call it. Follow `docs/FIRST_INSTALL.md` for the complete ordered installation; this helper directly manages only the Tailscale Funnel route.
+Use this skill only for a first connection, an explicitly requested DevSpace/tunnel repair, or a read-only endpoint diagnosis. Ordinary ChatGPT modes must not call it. This package exposes bounded local checks; DevSpace initialization and Tailscale Funnel configuration remain explicit operator actions.
 
 ## One-time setup
 
 The user must provide every allowed project root and the Tailscale MagicDNS hostname. A drive root such as `C:\` is rejected. The setup process is intentionally interactive because DevSpace itself stores the Owner secret in its own standard location; never copy that secret into a manifest, log, or Git file.
 
-When setup is invoked with only a new root, the preview reads the current
-DevSpace `allowedRoots`, preserves every existing root, and displays the
-complete merged list. For an existing installation, `--apply` backs up and
-atomically updates the non-secret DevSpace config while preserving its other
-fields. A first installation still uses DevSpace's interactive initialization.
-The helper verifies that the complete list persisted before restarting the
-service, preventing a one-root setup from silently removing approved projects.
+The preview reports the exact bounded diagnostic commands. It does not inspect
+or rewrite DevSpace configuration, manage credentials, restart services, or
+configure a Funnel.
 
-Preview the exact setup plan first:
+Preview the exact setup plan first, then explicitly execute the bounded setup
+commands only after operator approval:
 
 ```powershell
-awgpt doctor --project-root C:\projects\example
+awgpt workspace setup --root C:\projects\example
+awgpt workspace setup --root C:\projects\example --apply
 ```
 
-Only after the user approves the interactive DevSpace initialization and public Funnel exposure:
-
-```powershell
-awgpt doctor --project-root C:\projects\example --recover
-```
-
-On a first installation, `--apply` attaches `devspace init` to the current
-terminal, then performs the TTY-only Owner password keep/custom review. The
-generated high-entropy value is the recommended default; custom values are
-hidden-input, confirmed, and written only to DevSpace's private `auth.json`.
-Existing installations never enter this secret flow while adding roots.
-Afterward the helper starts `devspace serve` hidden and creates an HTTPS Funnel
-to `127.0.0.1:7676`. During `devspace init`, enter only the listed roots and
-the public origin `https://<hostname>` (without `/mcp`).
+The helper does not run `devspace init`, manage Owner credentials, restart
+services, or create a Funnel.
 
 The TypeScript helper does not patch DevSpace or manage its service. It exposes
 the bounded commands that are actually implemented:
@@ -50,10 +36,11 @@ awgpt workspace doctor --root C:\projects\example
 ```
 
 `workspace setup` previews `devspace doctor --root <root>` and
-`tailscale funnel status`; `--apply` executes those commands with the local
-process environment. `workspace doctor` is read-only and never applies config
-changes. Use DevSpace's own interactive setup and the Tailscale CLI separately
-when a service or Funnel must be configured.
+`tailscale funnel status`; `--apply` explicitly executes those commands with
+the local process environment. `workspace doctor` executes the same bounded
+diagnostics, never accepts `--apply`, and never performs setup mutations. Use
+DevSpace's own interactive setup and the Tailscale CLI separately when a
+service or Funnel must be configured.
 
 On Windows, any Startup shortcut or service wrapper must read
 `%USERPROFILE%\.devspace\config.json` at every launch and derive
@@ -89,17 +76,15 @@ The only app information to enter manually in ChatGPT Developer Mode is:
 
 Never open ChatGPT settings, register/delete an app, change permissions, inspect app lists, select an app name, or press Tab in the ChatGPT UI.
 
-Immediately after a manual first registration or requested reconnect, recycle
-the managed DevSpace process exactly once while preserving its configuration,
-Owner credential, OAuth database, roots, and Funnel hostname:
+After a manual first registration or requested reconnect, use the supported
+read-only workspace doctor to inspect the local state:
 
 ```powershell
-awgpt doctor --project-root C:\projects\example --recover
+awgpt workspace doctor --root C:\projects\example
 ```
 
-The packaged helper has no post-registration repair subcommand. After manual
-registration, use the supported read-only `awgpt workspace doctor` command and
-make any DevSpace/Tailscale service changes with their own documented tools.
+The packaged helper does not restart or initialize DevSpace/Tailscale. Make
+those service changes with their own documented tools.
 
 Then verify the manually registered app with a fresh **regular, non-Pro**
 Oracle `@codex` read-only probe that opens the exact project root and reads a
@@ -126,9 +111,9 @@ If the public endpoint is healthy but a ChatGPT call still fails after manual
 registration, report the registration URL and stop; do not loop or invent a
 post-registration repair command.
 
-For an explicitly requested service/Funnel repair, use the supported recovery
-diagnostic after DevSpace starts:
+For an explicitly requested service/Funnel repair, use the native DevSpace and
+Tailscale tools, then rerun the read-only diagnostic:
 
 ```powershell
-awgpt doctor --project-root C:\projects\one --recover
+awgpt workspace doctor --root C:\projects\one
 ```

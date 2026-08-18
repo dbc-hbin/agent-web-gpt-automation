@@ -19,4 +19,4 @@ export async function setupWorkspace(options: WorkspaceSetupOptions) {
 
 /** Doctor is intentionally the same bounded, read-only command set as setup preview. */
 export const doctorWorkspace = (root: string, runner?: CommandRunner) =>
-  setupWorkspace({ root, runner, dryRun: runner === undefined });
+  setupWorkspace({ root, runner, dryRun: false });

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, cp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { manifestFiles, installOrUpdate, rollbackInstall, resolvePackageSource } from '../src/cli/lifecycle.js';
-import { setupWorkspace } from '../src/core/workspace/commands.js';
+import { setupWorkspace, doctorWorkspace } from '../src/core/workspace/commands.js';
 
 const root = path.resolve(import.meta.dirname, '..');
 const skills = ['chatgpt-oracle-runtime','chatgpt-question-designer','chatgpt-workspace-setup','mcp-update-guard','ultra-economy-mode','web-multi-gpt'];
@@ -60,6 +60,18 @@ describe('TS-native package surfaces', () => {
     const result = await setupWorkspace({ root: '/project', dryRun: true, runner: { run: async () => ({ code: 99, stdout: '', stderr: '' }) } });
     expect(result.status).toBe('DRY_RUN');
     expect(result.commands).toHaveLength(2);
+  });
+
+  it('keeps workspace doctor diagnostic and separate from setup apply', async () => {
+    const calls: string[] = [];
+    const runner = { run: async (command: string) => { calls.push(command); return { code: 0, stdout: '', stderr: '' }; } };
+    const result = await doctorWorkspace('/project', runner);
+    expect(result.status).toBe('READY');
+    expect(calls).toEqual(['devspace', 'tailscale']);
+    const setup = await setupWorkspace({ root: '/project', apply: true, runner });
+    expect(setup.status).toBe('READY');
+    const doctorHelp = (await import('../src/cli/index.js')).createCLI().commands.find(c => c.name() === 'workspace')?.commands.find(c => c.name() === 'doctor')?.helpInformation() ?? '';
+    expect(doctorHelp).not.toContain('--apply');
   });
 
   it('installs and rolls back using receipt/WAL lifecycle', async () => {

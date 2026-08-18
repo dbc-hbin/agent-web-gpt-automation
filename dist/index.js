@@ -2768,7 +2768,7 @@ async function setupWorkspace(options) {
   for (const c of commands) results.push({ ...c, result: await options.runner.run(c.command, [...c.args]) });
   return { schema: "codex.chatgpt.workspace/v1", status: results.every((r) => r.result.code === 0) ? "READY" : "BLOCKED", results };
 }
-var doctorWorkspace = (root, runner) => setupWorkspace({ root, runner, dryRun: runner === void 0 });
+var doctorWorkspace = (root, runner) => setupWorkspace({ root, runner, dryRun: false });
 
 // src/cli/index.ts
 import { readFile as readFile11 } from "node:fs/promises";
@@ -2844,18 +2844,26 @@ function createCLI() {
     else if (report.status === "BLOCKED") process.exitCode = 2;
   });
   const workspace = program2.command("workspace").description("Configure and inspect the exact DevSpace workspace");
-  for (const action of ["setup", "doctor"]) {
-    workspace.command(action).description(action === "setup" ? "Preview workspace commands (use --apply to execute)" : "Run workspace checks").option("--root <path>", "exact project root", process.cwd()).option("--apply", "execute commands; preview is the default").action(async (options) => {
-      try {
-        const result = await setupWorkspace({ root: options.root, apply: Boolean(options.apply), runner: localCommandRunner });
-        console.log(JSON.stringify(result, null, 2));
-        if (result.status === "BLOCKED") process.exitCode = 2;
-      } catch (error) {
-        console.error(error instanceof Error ? error.message : String(error));
-        process.exitCode = 1;
-      }
-    });
-  }
+  workspace.command("setup").description("Preview workspace checks (use --apply to execute)").option("--root <path>", "exact project root", process.cwd()).option("--apply", "execute the bounded setup commands").action(async (options) => {
+    try {
+      const result = await setupWorkspace({ root: options.root, apply: Boolean(options.apply), runner: localCommandRunner });
+      console.log(JSON.stringify(result, null, 2));
+      if (result.status === "BLOCKED") process.exitCode = 2;
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
+  });
+  workspace.command("doctor").description("Run read-only workspace checks").option("--root <path>", "exact project root", process.cwd()).action(async (options) => {
+    try {
+      const result = await setupWorkspace({ root: options.root, dryRun: false, runner: localCommandRunner });
+      console.log(JSON.stringify(result, null, 2));
+      if (result.status === "BLOCKED") process.exitCode = 2;
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
+  });
   program2.command("auth-preflight").description("Validate ChatGPT authentication and required composer DOM without submitting").requiredOption("--copy-profile <path>", "manual-login profile seed").option("--oracle-home <path>", "isolated Oracle home", path12.join(os4.homedir(), ".oracle")).option("--chrome-path <path>", "Chrome executable override").action(async (options) => {
     const manager = new ProfileManager({ sourceProfilePath: options.copyProfile }, options.oracleHome);
     const id = `preflight-${Date.now()}`;
