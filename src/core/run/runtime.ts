@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, writeFile, realpath } from 'node:fs/promises';
+import { lstat, mkdir, readFile, writeFile, realpath, rename, rm } from 'node:fs/promises';
 import * as path from 'node:path';
 import { execa } from 'execa';
 import { LockManager } from '../state/locks.js';
@@ -20,6 +20,24 @@ async function assertRunDirectory(dir: string, expected: { dev: number; ino: num
   const real = await realpath(dir).catch(() => '');
   if (real !== expected.real) throw new Error('RUN_DIRECTORY_CHANGED');
   await assertSafeOutput(path.join(dir, 'output.md'), dir);
+}
+async function writeAuxiliaryFile(dir: string, name: string, value: string, identity: { dev: number; ino: number; real: string }) {
+  await assertRunDirectory(dir, identity);
+  const target = path.join(dir, name);
+  const existing = await lstat(target).catch(() => undefined);
+  if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error('AUXILIARY_PATH_INVALID');
+  const temporary = path.join(dir, `.${name}.${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporary, value, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    await rename(temporary, target);
+    await assertRunDirectory(dir, identity);
+    const written = await lstat(target).catch(() => undefined);
+    if (!written?.isFile() || written.isSymbolicLink()) throw new Error('AUXILIARY_PATH_INVALID');
+    const parent = await realpath(path.dirname(target)).catch(() => '');
+    if (parent !== identity.real) throw new Error('AUXILIARY_PATH_INVALID');
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
 }
 export async function runOracle(options: RunOptions): Promise<RunResult> {
   const root = await exactDir(options.projectRoot); const requestedMission = path.resolve(options.missionPath);
@@ -84,14 +102,14 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
     const out=await child;
     if (child.pid) { const rec=(await registry.list()).find(r=>r.id===runId); if(rec) await registry.upsert({...rec,state:'exited'}); }
     const stdout=out.stdout??''; const stderr=out.stderr??''; await assertRunDirectory(dir, runDirIdentity);
-    await writeFile(path.join(dir,'stdout.log'),stdout); await writeFile(path.join(dir,'stderr.log'),stderr);
+    await writeAuxiliaryFile(dir, 'stdout.log', stdout, runDirIdentity); await writeAuxiliaryFile(dir, 'stderr.log', stderr, runDirIdentity);
     await assertRunDirectory(dir, runDirIdentity);
     const outputStat = await lstat(outputPath).catch(() => undefined); if (outputStat && (!outputStat.isFile() || outputStat.isSymbolicLink())) throw new Error('OUTPUT_PATH_INVALID');
     const durable = outputStat ? await readFile(outputPath) : Buffer.from('');
     let outcome:'EXECUTED'|'NOT_EXECUTED'|'BLOCKED'|'pending'='pending'; let authority: SessionAuthority=out.exitCode===0?'terminal_observed':'submitted_unknown';
     if (out.exitCode===0) { try { outcome=parseTaskOutcome(durable.toString('utf8')).outcome; } catch { authority='submitted_unknown'; } }
     if (out.exitCode===0 && durable.length===0) authority='submitted_unknown';
-    await writeFile(path.join(dir,'transcript.md'), stdout);
+    await writeAuxiliaryFile(dir, 'transcript.md', stdout, runDirIdentity);
     if (authority === 'terminal_observed' && outcome !== 'pending') authority = 'settled';
     retainLock = ['submitted_unknown','live','terminal_observed'].includes(authority);
     const state: OracleRunState={...initial,task_outcome_contract:'v1',session_authority:authority,transport_status: (authority === 'settled' || authority === 'terminal_observed') ? 'complete' : out.exitCode===0?'pending':'failed',task_outcome:outcome,process: child.pid ? {pid:child.pid,command:command[0],args} : undefined,artifacts:{output:outputPath,transcript:path.join(dir,'transcript.md'),stdout:path.join(dir,'stdout.log'),stderr:path.join(dir,'stderr.log'),browser_temp:dir}};

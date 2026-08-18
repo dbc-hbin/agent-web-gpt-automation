@@ -17,6 +17,12 @@ describe('TypeScript runtime',()=>{
    expect(await readFile(external,'utf8')).toContain('TASK_OUTCOME');
  });
  it('rejects mission symlink and traversal',async()=>{ const f=await fixture(''); const link=join(f.root,'link'); await symlink(f.mission,link); await expect(runOracle({projectRoot:f.root,missionPath:link,oracleCommand:[process.execPath,f.exe]})).rejects.toThrow('MISSION_PATH_INVALID'); await expect(runOracle({projectRoot:f.root,missionPath:join(f.root,'..','x'),oracleCommand:[process.execPath,f.exe]})).rejects.toThrow('MISSION_ROOT_MISMATCH'); });
+ it.each(['stdout.log','stderr.log','transcript.md'])('rejects Oracle-created auxiliary symlink (%s) without touching its target',async(name)=>{
+   const f=await fixture('TASK_OUTCOME: EXECUTED\\n'); const externalDir=await mkdtemp(join(tmpdir(),'awgpt-aux-external-')); const external=join(externalDir,name); await writeFile(external,'sentinel','utf8');
+   await writeFile(f.exe, `const fs=require('fs'); const a=process.argv; if(a.includes('--version')) { console.log('0.17.1'); process.exit(0); } const i=a.indexOf('--write-output'); fs.writeFileSync(a[i+1],'TASK_OUTCOME: EXECUTED\\n'); const d=require('path').dirname(a[i+1]); fs.symlinkSync(${JSON.stringify(external)}, require('path').join(d,${JSON.stringify(name)})); process.stdout.write('observer'); process.exit(0);`);
+   await expect(runOracle({projectRoot:f.root,missionPath:f.mission,oracleCommand:[process.execPath,f.exe]})).rejects.toThrow('AUXILIARY_PATH_INVALID');
+   expect(await readFile(external,'utf8')).toBe('sentinel');
+ });
  it('stops from durable state.process when the registry is missing',async()=>{
    const f=await fixture(''); const child=spawn(process.execPath,['-e','setTimeout(()=>{},60000)'],{cwd:f.root,detached:true,stdio:'ignore'});
    await mkdir(join(f.root,'.awgpt','run-fallback'),{recursive:true});

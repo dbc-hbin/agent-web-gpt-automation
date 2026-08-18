@@ -2250,7 +2250,7 @@ import * as path12 from "node:path";
 
 // src/core/run/runtime.ts
 import { createHash as createHash6, randomUUID as randomUUID6 } from "node:crypto";
-import { lstat as lstat5, mkdir as mkdir8, readFile as readFile9, writeFile as writeFile2, realpath as realpath2 } from "node:fs/promises";
+import { lstat as lstat5, mkdir as mkdir8, readFile as readFile9, writeFile as writeFile2, realpath as realpath2, rename as rename4, rm as rm6 } from "node:fs/promises";
 import * as path9 from "node:path";
 import { execa as execa4 } from "execa";
 var sha = (b) => createHash6("sha256").update(b).digest("hex");
@@ -2286,6 +2286,24 @@ async function assertRunDirectory2(dir, expected) {
   const real = await realpath2(dir).catch(() => "");
   if (real !== expected.real) throw new Error("RUN_DIRECTORY_CHANGED");
   await assertSafeOutput(path9.join(dir, "output.md"), dir);
+}
+async function writeAuxiliaryFile(dir, name, value, identity) {
+  await assertRunDirectory2(dir, identity);
+  const target = path9.join(dir, name);
+  const existing = await lstat5(target).catch(() => void 0);
+  if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error("AUXILIARY_PATH_INVALID");
+  const temporary = path9.join(dir, `.${name}.${randomUUID6()}.tmp`);
+  try {
+    await writeFile2(temporary, value, { encoding: "utf8", flag: "wx", mode: 384 });
+    await rename4(temporary, target);
+    await assertRunDirectory2(dir, identity);
+    const written = await lstat5(target).catch(() => void 0);
+    if (!written?.isFile() || written.isSymbolicLink()) throw new Error("AUXILIARY_PATH_INVALID");
+    const parent = await realpath2(path9.dirname(target)).catch(() => "");
+    if (parent !== identity.real) throw new Error("AUXILIARY_PATH_INVALID");
+  } finally {
+    await rm6(temporary, { force: true }).catch(() => void 0);
+  }
 }
 async function runOracle(options) {
   const root = await exactDir(options.projectRoot);
@@ -2397,8 +2415,8 @@ ${versionCheck.stderr}`.trim();
     const stdout = out.stdout ?? "";
     const stderr = out.stderr ?? "";
     await assertRunDirectory2(dir, runDirIdentity);
-    await writeFile2(path9.join(dir, "stdout.log"), stdout);
-    await writeFile2(path9.join(dir, "stderr.log"), stderr);
+    await writeAuxiliaryFile(dir, "stdout.log", stdout, runDirIdentity);
+    await writeAuxiliaryFile(dir, "stderr.log", stderr, runDirIdentity);
     await assertRunDirectory2(dir, runDirIdentity);
     const outputStat = await lstat5(outputPath).catch(() => void 0);
     if (outputStat && (!outputStat.isFile() || outputStat.isSymbolicLink())) throw new Error("OUTPUT_PATH_INVALID");
@@ -2413,7 +2431,7 @@ ${versionCheck.stderr}`.trim();
       }
     }
     if (out.exitCode === 0 && durable.length === 0) authority = "submitted_unknown";
-    await writeFile2(path9.join(dir, "transcript.md"), stdout);
+    await writeAuxiliaryFile(dir, "transcript.md", stdout, runDirIdentity);
     if (authority === "terminal_observed" && outcome !== "pending") authority = "settled";
     retainLock = ["submitted_unknown", "live", "terminal_observed"].includes(authority);
     const state = { ...initial, task_outcome_contract: "v1", session_authority: authority, transport_status: authority === "settled" || authority === "terminal_observed" ? "complete" : out.exitCode === 0 ? "pending" : "failed", task_outcome: outcome, process: child.pid ? { pid: child.pid, command: command[0], args } : void 0, artifacts: { output: outputPath, transcript: path9.join(dir, "transcript.md"), stdout: path9.join(dir, "stdout.log"), stderr: path9.join(dir, "stderr.log"), browser_temp: dir } };
