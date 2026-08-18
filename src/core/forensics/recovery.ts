@@ -136,7 +136,7 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
         const contract = String(raw.task_outcome_contract ?? 'legacy');
         if (contract === 'v1') {
           const parsed = parseTaskOutcome(new TextDecoder('utf-8', { fatal: true }).decode(output));
-          taskOutcome = parsed.outcome.toLowerCase();
+          taskOutcome = parsed.outcome;
         } else {
           taskOutcome = 'legacy_unclassified';
         }
@@ -149,8 +149,8 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
       const destinationStat = await lstat(plan.authoritative_output_path).catch(() => undefined);
       if (destinationStat?.isSymbolicLink()) throw new Error('RECOVERY_OUTPUT_SYMLINK_FORBIDDEN');
       await rename(plan.output_path, plan.authoritative_output_path);
-      authority = 'terminal';
-      status = ['executed', 'legacy_unclassified'].includes(taskOutcome) ? 'complete' : 'attention_required';
+      authority = 'terminal_observed';
+      status = ['EXECUTED', 'legacy_unclassified'].includes(taskOutcome) ? 'complete' : 'attention_required';
       harvested = true;
     } else {
       await rm(plan.output_path, { force: true });
@@ -166,7 +166,7 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
     exit_code: result.exitCode ?? 1,
     session_authority: authority,
     terminal_harvested: harvested,
-    transport_status: harvested ? 'complete' : status === 'session_live' ? 'pending' : 'incomplete',
+    transport_status: harvested ? 'complete' : status === 'session_live' ? 'pending' : 'failed',
     task_outcome: harvested ? taskOutcome : 'pending',
     artifact_sha256: harvested
       ? createHash('sha256').update(await readFile(plan.authoritative_output_path)).digest('hex')
