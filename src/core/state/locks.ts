@@ -1,9 +1,10 @@
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
-import { readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm } from 'node:fs/promises';
 import { SessionAuthority } from '../../types/index.js';
 import { createLockAdapter, LockAdapter } from './lock-adapter.js';
+import writeFileAtomic from 'write-file-atomic';
 
 export interface LockConfig {
   projectRoot: string;
@@ -63,7 +64,7 @@ export class LockManager {
     const ownerToken = crypto.randomUUID();
     const ownerPath = `${this.lockPath}.owner.json`;
     try {
-      await writeFile(ownerPath, JSON.stringify({
+      await writeFileAtomic(ownerPath, JSON.stringify({
         schema: 'codex.chatgpt.project-lock-owner/v1',
         pid: process.pid,
         token: ownerToken,
@@ -79,8 +80,17 @@ export class LockManager {
       releasePromise ??= (async () => {
         const owner = JSON.parse(await readFile(ownerPath, 'utf8')) as { token?: string };
         if (owner.token !== ownerToken) throw new Error('PROJECT_LOCK_OWNER_MISMATCH');
+        // Release the kernel lock first, then remove only our sidecar.  A
+        // contender can acquire immediately after release and publish a new
+        // owner; never delete that newer owner's evidence.
         await release();
-        await rm(ownerPath, { force: true });
+        try {
+          const currentOwner = JSON.parse(await readFile(ownerPath, 'utf8')) as { token?: string };
+          if (currentOwner.token === ownerToken) await rm(ownerPath, { force: true });
+        } catch {
+          // The sidecar may already have been replaced or removed.  The lock
+          // itself has been released, so cleanup is intentionally idempotent.
+        }
         if (this.ownedRelease === ownedRelease) this.ownedRelease = undefined;
       })();
       await releasePromise;
@@ -138,7 +148,25 @@ export class LockManager {
 
     const lockDirectory = `${this.lockPath}.lock`;
     const quarantine = `${this.lockPath}.reclaim-${crypto.randomUUID()}`;
-    await rename(lockDirectory, quarantine);
+    let quarantined = false;
+    try {
+      await rename(lockDirectory, quarantine);
+      quarantined = true;
+    } catch (error) {
+      // A previous recovery may have already quarantined the lock.  Once the
+      // dead-owner evidence has been validated, an absent lock directory is
+      // an idempotent success rather than a storage failure.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    if (!quarantined) {
+      try {
+        const currentOwner = JSON.parse(await readFile(ownerPath, 'utf8')) as { token?: string };
+        if (currentOwner.token === owner.token) await rm(ownerPath, { force: true });
+      } catch {
+        // Sidecar was concurrently replaced or removed.
+      }
+      return;
+    }
     try {
       await rm(quarantine, { recursive: true, force: false });
       try {
