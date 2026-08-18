@@ -133,7 +133,16 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
   await assertSafeOutputPath(plan.output_path, runDir);
   await assertSafeOutputPath(plan.authoritative_output_path, runDir);
   const lock = new LockManager({ projectRoot: plan.project_root });
-  const acquired = await lock.tryAcquire();
+  let acquired = await lock.tryAcquire();
+  if (!acquired.held) {
+    // The original submitter deliberately retains the lock while authority is
+    // unknown. If its persisted identity still matches this exact recovery
+    // plan and the owner process is dead, atomically quarantine that owner
+    // lock, then acquire it for this recovery attempt. Live or mismatched
+    // owners remain blocked by tryAcquire/reclaim evidence checks.
+    await lock.reclaimAbandoned('submitted_unknown', { recoveryTakeover: true });
+    acquired = await lock.tryAcquire();
+  }
   if (!acquired.held) throw new Error('RECOVERY_PROJECT_LOCK_HELD');
   const release = acquired.release;
   try {

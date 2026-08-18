@@ -115,8 +115,8 @@ export class LockManager {
     await release();
   }
 
-  async reclaimAbandoned(sessionAuthority: SessionAuthority): Promise<void> {
-    if (sessionAuthority !== 'settled') {
+  async reclaimAbandoned(sessionAuthority: SessionAuthority, options: { recoveryTakeover?: boolean } = {}): Promise<void> {
+    if (sessionAuthority !== 'settled' && !options.recoveryTakeover) {
       throw new Error(`PROJECT_LOCK_RECLAIM_FORBIDDEN: ${sessionAuthority}`);
     }
     if (this.ownedRelease) throw new Error('PROJECT_LOCK_OWNER_STILL_ALIVE');
