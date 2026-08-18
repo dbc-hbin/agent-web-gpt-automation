@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { launchProfileLogin, prepareProfileLogin, runDoctor } from './doctor.js';
-import { installOrUpdate, rollbackInstall } from './lifecycle.js';
+import { installOrUpdate, rollbackInstall, resolvePackageSource } from './lifecycle.js';
 import { ProfileManager } from '../core/process/profiles.js';
 import { preflightCopiedProfile } from '../core/process/auth-preflight.js';
 import { recoverChatGptLogin } from '../core/process/cookie-recovery.js';
@@ -107,11 +107,16 @@ export function createCLI(): Command {
   for (const action of ['install', 'update'] as const) {
     program.command(action)
       .description(`${action} repository-managed Agent Web GPT files with a receipt`)
-      .option('--source <path>', 'repository source root', process.cwd())
+      .option('--source <path>', 'repository source root (defaults to the installed package)')
       .option('--agent-home <path>', 'installation root', path.join(os.homedir(), '.codex'))
       .action(async options => {
-        const result = await installOrUpdate(action, options.source, options.agentHome);
-        console.log(JSON.stringify(result, null, 2));
+        try {
+          const result = await installOrUpdate(action, options.source ?? resolvePackageSource(), options.agentHome);
+          console.log(JSON.stringify(result, null, 2));
+        } catch (error) {
+          console.log(JSON.stringify({ schema: 'codex.chatgpt.install/v1', ok: false, action, status: 'FAILED', code: errorCode(error), message: error instanceof Error ? error.message : String(error) }, null, 2));
+          process.exitCode = 2;
+        }
       });
   }
 
@@ -120,9 +125,14 @@ export function createCLI(): Command {
     .option('--agent-home <path>', 'installation root', path.join(os.homedir(), '.codex'))
     .option('--receipt <path>', 'specific owned receipt')
     .action(async options => {
-      const result = await rollbackInstall(options.agentHome, options.receipt);
-      console.log(JSON.stringify(result, null, 2));
-      if (!result.ok) process.exitCode = 2;
+      try {
+        const result = await rollbackInstall(options.agentHome, options.receipt);
+        console.log(JSON.stringify(result, null, 2));
+        if (!result.ok) process.exitCode = 2;
+      } catch (error) {
+        console.log(JSON.stringify({ schema: 'codex.chatgpt.install/v1', ok: false, action: 'rollback', status: 'FAILED', code: errorCode(error), message: error instanceof Error ? error.message : String(error) }, null, 2));
+        process.exitCode = 2;
+      }
     });
 
   program
@@ -149,4 +159,9 @@ export function createCLI(): Command {
     .action(async o => { try { await stopRecorded(o.state); console.log(JSON.stringify({ok:true})); } catch(e){ console.error(e instanceof Error?e.message:e); process.exitCode=1; } });
 
   return program;
+}
+
+function errorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.split(':', 1)[0] || 'LIFECYCLE_FAILED';
 }

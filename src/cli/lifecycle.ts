@@ -1,12 +1,23 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { copyFile, lstat, mkdir, readFile, readdir, rm } from 'node:fs/promises';
+import { accessSync } from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import writeFileAtomic from 'write-file-atomic';
 import { z } from 'zod';
 
 /** Resolve the packaged source root independently of the caller's cwd. */
 export function resolvePackageSource(metaUrl = import.meta.url): string {
-  return path.resolve(new URL('../../', metaUrl).pathname);
+  let cursor = path.dirname(fileURLToPath(metaUrl));
+  for (let i = 0; i < 5; i += 1) {
+    if (path.basename(cursor) !== 'node_modules' && pathExists(path.join(cursor, 'install-manifest.json'))) return cursor;
+    cursor = path.dirname(cursor);
+  }
+  return path.resolve(fileURLToPath(new URL('../', metaUrl)));
+}
+
+function pathExists(file: string): boolean {
+  try { accessSync(file); return true; } catch { return false; }
 }
 
 const RECEIPT_SCHEMA = 'codex.chatgpt.install-receipt/v1' as const;

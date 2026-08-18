@@ -26,6 +26,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "pack:check": "npm pack --dry-run",
+    "package:e2e": "node tests/package-e2e.mjs",
     "doctor": "node dist/index.js doctor",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "prepack": "npm run build"
