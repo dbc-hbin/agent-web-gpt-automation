@@ -22,13 +22,13 @@ service, preventing a one-root setup from silently removing approved projects.
 Preview the exact setup plan first:
 
 ```powershell
-awgpt setup --root C:\projects\example --hostname your-device.your-tailnet.ts.net --dry-run
+awgpt doctor --project-root C:\projects\example
 ```
 
 Only after the user approves the interactive DevSpace initialization and public Funnel exposure:
 
 ```powershell
-awgpt setup --root C:\projects\example --hostname your-device.your-tailnet.ts.net --apply
+awgpt doctor --project-root C:\projects\example --recover
 ```
 
 On a first installation, `--apply` attaches `devspace init` to the current
@@ -86,7 +86,7 @@ the managed DevSpace process exactly once while preserving its configuration,
 Owner credential, OAuth database, roots, and Funnel hostname:
 
 ```powershell
-awgpt post-register --root C:\projects\example --hostname your-device.your-tailnet.ts.net
+awgpt doctor --project-root C:\projects\example --recover
 ```
 
 `post-register` also recycles only the exclusive managed HTTPS port before
@@ -111,22 +111,9 @@ probes, while any config change triggers a lightweight recheck.
 This is read-only and checks only local DevSpace, then Funnel status, then the public `/mcp` endpoint:
 
 ```powershell
-awgpt doctor --root C:\projects\one --hostname your-device.your-tailnet.ts.net
+awgpt doctor --project-root C:\projects\one
 ```
 
-If the public endpoint is healthy but a ChatGPT call still fails immediately
-after a manual registration or reconnect, run `post-register` once and repeat
-only the regular read-only Oracle probe. If that still fails, report the same
-registration URL and stop. Do not re-register the app automatically or loop
-the refresh.
-
-For an explicitly requested service/Funnel repair, use the idempotent `ensure`
-command after DevSpace starts:
-
-```powershell
-awgpt ensure --root C:\projects\one --hostname your-device.your-tailnet.ts.net
-```
-
-`ensure` requires the actual local MCP endpoint to respond before it reasserts
-the exact Funnel mapping. It refuses a conflicting mapping and never changes
-ChatGPT settings or app registration.
+If the endpoint is healthy but a ChatGPT call still fails, preserve the exact
+run state and use `awgpt recover --state <path> --action harvest`; never create
+a replacement submission automatically.

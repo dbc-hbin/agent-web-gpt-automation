@@ -19,7 +19,7 @@ Advisory lanes are `access: read-only`. A write lane must declare
 the canonical root is forbidden for write lanes.
 
 ```powershell
-awgpt --manifest C:\project\multi.json --dry-run
+awgpt run --project-root C:\project --mission C:\project\missions\multi.md --manifest C:\project\multi.json
 ```
 
 Each lane receives its own Oracle slug/run/output and only `@DevSpace` plus its
@@ -32,4 +32,3 @@ closing or taking over another solver's Chrome session.
 
 No attachments, app/settings automation, broad tab cleanup, `--force`,
 restart, or silent resubmission. Oracle owns one-shot tab archival.
-

@@ -42,12 +42,12 @@ or their tests. Cross-session patching previously produced duplicate fixes,
 conflicting state rules, and repairs aimed at the layer that reported the symptom
 instead of the layer that failed.
 
-- Build the handover with
-  `awgpt report --run-dir <exact-run-dir>`.
+   - Build the handover by preserving the exact run state and inspecting it
+   with `awgpt doctor --project-root <root> --state <state-path>`.
   The packet carries the exact run directory, the classified bucket, the
   lifecycle verdict with its authority source, and existing evidence paths.
-- Classify before repairing. Run
-  `awgpt --summary-only`
+   - Classify before repairing. Run
+   `awgpt audit --state <state-path>`
   and fix the largest bucket rather than the newest report. A `pre-submit-*`
   bucket proves no web submission occurred and is safe to retry; a
   `post-submit-*` bucket requires exact-slug recovery and never a replacement
