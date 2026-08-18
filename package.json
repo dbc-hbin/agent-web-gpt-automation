@@ -1,0 +1,45 @@
+{
+  "name": "awgpt",
+  "version": "1.0.0",
+  "description": "Guarded, recoverable web GPT automation",
+  "type": "module",
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "files": [
+    "dist/",
+    "contracts/orchestrator/phase5-recovery-v1.json",
+    "install-manifest.json",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "main": "dist/index.js",
+  "bin": {
+    "awgpt": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "doctor": "node dist/index.js doctor",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "execa": "^9.5.0",
+    "proper-lockfile": "^4.1.2",
+    "write-file-atomic": "^6.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/proper-lockfile": "^4.1.4",
+    "@types/write-file-atomic": "^4.0.3",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "4.1.9"
+  }
+}

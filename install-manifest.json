@@ -1,0 +1,10 @@
+{
+  "schema": "codex.chatgpt.install-manifest/v1",
+  "version": "1.0.0",
+  "include": [
+    "dist/*.js",
+    "dist/*.map",
+    "package.json",
+    "contracts/orchestrator/phase5-recovery-v1.json"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "codexpro.install-wal/v1",
+  "type": "object",
+  "required": ["schema", "status", "backup", "files"],
+  "properties": {
+    "schema": {"const": "codexpro.install-wal/v1"},
+    "status": {"enum": ["ACTIVE", "COMPLETE", "ROLLED_BACK_AFTER_CRASH"]},
+    "backup": {"type": "string", "minLength": 1},
+    "files": {"type": "array", "items": {"$ref": "#/$defs/file"}}
+  },
+  "$defs": {"file": {"type": "object", "required": ["path", "action", "installed_sha256", "phase", "transitions", "replacement"], "properties": {"path": {"type": "string", "pattern": "^(?!.*(?:^|[\\\\/])\\.?(?:\\\\/|$)).+"}, "action": {"enum": ["created", "overwritten"]}, "installed_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "backup_sha256": {"type": ["string", "null"]}, "phase": {"enum": ["INTENT", "MUTATED", "VERIFIED", "COMPLETE"]}, "transitions": {"type": "array", "items": {"enum": ["INTENT", "MUTATED", "VERIFIED", "COMPLETE"]}}, "replacement": {"type": "string", "minLength": 1}}, "additionalProperties": true}}
+}

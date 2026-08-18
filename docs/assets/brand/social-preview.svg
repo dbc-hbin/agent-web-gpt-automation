@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Web GPT Automation Social Preview</title>
+  <desc id="desc">Guarded and recoverable web ChatGPT automation.</desc>
+  <defs>
+    <linearGradient id="spCyan" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="40%" stop-color="#2DD4BF"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <linearGradient id="spPurple" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="60%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#C084FC"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Clean Solid Dark Background -->
+  <rect width="1280" height="640" fill="#0B0F19"/>
+
+  <!-- Icon Mark Graphic -->
+  <g transform="translate(100, 140) scale(0.703125)">
+    <rect width="512" height="512" rx="112" fill="#131C31"/>
+    <rect width="504" height="504" x="4" y="4" rx="108" fill="none" stroke="#1E293B" stroke-width="3"/>
+    <path d="M 256,92 C 340,92 412,154 412,238 C 412,284 388,324 352,348 L 308,304 C 330,288 344,264 344,238 C 344,188 304,152 256,152 C 214,152 178,180 170,220 L 102,204 C 118,138 180,92 256,92 Z" fill="url(#spCyan)"/>
+    <path d="M 256,420 C 172,420 100,358 100,274 C 100,228 124,188 160,164 L 204,208 C 182,224 168,248 168,274 C 168,324 208,360 256,360 C 298,360 334,332 342,292 L 410,308 C 394,374 332,420 256,420 Z" fill="url(#spPurple)"/>
+    <polygon points="256,218 288,256 256,294 224,256" fill="#FFFFFF"/>
+    <circle cx="256" cy="256" r="6" fill="#38BDF8"/>
+  </g>
+
+  <!-- High-Contrast Crisp Typography -->
+  <text x="500" y="252" fill="#F8FAFC" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="66" font-weight="800" letter-spacing="-2">Agent Web GPT</text>
+  <text x="504" y="324" fill="#94A3B8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="38" font-weight="600" letter-spacing="7">AUTOMATION</text>
+  <text x="504" y="396" fill="#CBD5E1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="24">Guarded. Recoverable. Web-first.</text>
+  <text x="504" y="444" fill="#64748B" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="19">Oracle · DevSpace · Web Multi-GPT · Cross-Platform</text>
+</svg>

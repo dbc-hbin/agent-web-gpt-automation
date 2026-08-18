@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 280" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Web GPT Automation</title>
+  <desc id="desc">Product wordmark for Agent Web GPT Automation.</desc>
+  <defs>
+    <linearGradient id="wmCyan" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="40%" stop-color="#2DD4BF"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <linearGradient id="wmPurple" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="60%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#C084FC"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Embedded Mobius Mark -->
+  <g transform="translate(28, 20) scale(0.46875)">
+    <rect width="512" height="512" rx="112" fill="#0A0E17"/>
+    <path d="M 256,92 C 340,92 412,154 412,238 C 412,284 388,324 352,348 L 308,304 C 330,288 344,264 344,238 C 344,188 304,152 256,152 C 214,152 178,180 170,220 L 102,204 C 118,138 180,92 256,92 Z" fill="url(#wmCyan)"/>
+    <path d="M 256,420 C 172,420 100,358 100,274 C 100,228 124,188 160,164 L 204,208 C 182,224 168,248 168,274 C 168,324 208,360 256,360 C 298,360 334,332 342,292 L 410,308 C 394,374 332,420 256,420 Z" fill="url(#wmPurple)"/>
+    <polygon points="256,218 288,256 256,294 224,256" fill="#FFFFFF"/>
+    <circle cx="256" cy="256" r="6" fill="#38BDF8"/>
+  </g>
+
+  <!-- Typography -->
+  <text x="300" y="118" fill="#0A0E17" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="64" font-weight="800" letter-spacing="-1.5">Agent Web GPT</text>
+  <text x="304" y="182" fill="#64748B" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="34" font-weight="600" letter-spacing="6.5">AUTOMATION</text>
+</svg>
