@@ -14,6 +14,7 @@ import {
 import { LockManager } from '../core/state/locks.js';
 import { ProcessRegistry, pidIsAlive, terminatePersistedProcess } from '../core/process/registry.js';
 import { executeExactRecovery, planExactRecovery } from '../core/forensics/recovery.js';
+import { qualifyExactProjectRoot, type DevSpaceClient } from '../core/devspace/qualification.js';
 
 export const DoctorCheck = z.object({
   name: z.string(),
@@ -51,6 +52,7 @@ export interface DoctorOptions {
   oracleHome?: string;
   recover?: boolean;
   reconnectDevSpace?: (projectRoot: string) => Promise<boolean>;
+  devspaceClient?: DevSpaceClient;
 }
 
 const DEVSPACE_ACCEPTED_STATUSES = new Set([200, 401, 403, 405, 406]);
@@ -214,7 +216,15 @@ export async function runDoctor(options: DoctorOptions | string): Promise<Doctor
   const checks: z.infer<typeof DoctorCheck>[] = [];
   const nextActions: string[] = [];
 
-  let devspaceReachable = await checkDevSpace(normalized.devspaceUrl);
+  if (normalized.devspaceClient) {
+    const qualification = await qualifyExactProjectRoot(projectRoot, normalized.devspaceClient);
+    checks.push({ name: 'devspace', status: qualification.ok ? 'PASS' : 'BLOCKED', code: qualification.code,
+      message: qualification.ok ? 'DevSpace exact project root qualified with a read-only tool call.' : (qualification.detail ?? 'DevSpace exact-root qualification failed.') });
+    if (!qualification.ok) return DoctorReport.parse({ schema: 'codex.chatgpt.agent-web-gpt-doctor/v1', status: 'BLOCKED', checks,
+      sessions: [], locks_held: false, next_actions: ['Register the exact project root in DevSpace, then rerun doctor.'] });
+  }
+
+  let devspaceReachable = normalized.devspaceClient ? true : await checkDevSpace(normalized.devspaceUrl);
   if (!devspaceReachable && normalized.recover) {
     const reconnected = await (normalized.reconnectDevSpace ?? defaultReconnectDevSpace)(projectRoot);
     devspaceReachable = reconnected && await checkDevSpace(normalized.devspaceUrl);

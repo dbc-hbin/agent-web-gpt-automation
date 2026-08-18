@@ -3,6 +3,7 @@
 import { createCLI } from './cli/index.js';
 export * from './cli/index.js';
 export * from './cli/doctor.js';
+export * from './core/devspace/qualification.js';
 export * from './cli/lifecycle.js';
 export * from './types/index.js';
 export * from './core/state/store.js';
