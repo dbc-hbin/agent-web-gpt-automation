@@ -1950,9 +1950,98 @@ import * as path11 from "node:path";
 
 // src/core/run/runtime.ts
 import { createHash as createHash5, randomUUID as randomUUID5 } from "node:crypto";
-import { lstat as lstat5, mkdir as mkdir7, readFile as readFile8, writeFile as writeFile2 } from "node:fs/promises";
+import { lstat as lstat5, mkdir as mkdir8, readFile as readFile9, writeFile as writeFile2 } from "node:fs/promises";
 import * as path9 from "node:path";
 import { execa as execa4 } from "execa";
+
+// src/core/state/store.ts
+import writeFileAtomic6 from "write-file-atomic";
+import { mkdir as mkdir7, readFile as readFile8 } from "node:fs/promises";
+import { dirname as dirname5, resolve as resolve8 } from "node:path";
+import * as lockFile3 from "proper-lockfile";
+var IMMUTABLE_FIELDS = ["run_id", "project_root", "mission_path"];
+var StateStore = class {
+  statePath;
+  constructor(statePath) {
+    this.statePath = resolve8(statePath);
+  }
+  async write(data, options = {}) {
+    const validated = PersistentStateSchema.parse(data);
+    if (validated.schema === "codex.chatgpt.oracle-workflow/v1") {
+      validateWorkflowStateConsistency(validated);
+    }
+    await mkdir7(dirname5(this.statePath), { recursive: true });
+    const release = await lockFile3.lock(this.statePath, {
+      realpath: false,
+      retries: { retries: 20, minTimeout: 5, maxTimeout: 50 },
+      stale: 3e4,
+      update: 1e4
+    });
+    try {
+      const current = await this.readIfPresent();
+      if (current) {
+        this.assertUpdateAllowed(current, validated, options);
+      }
+      await writeFileAtomic6(this.statePath, `${JSON.stringify(validated, null, 2)}
+`, {
+        fsync: true
+      });
+    } finally {
+      await release();
+    }
+  }
+  async read() {
+    const raw = await readFile8(this.statePath, "utf8");
+    const parsed = PersistentStateSchema.parse(JSON.parse(raw));
+    if (parsed.schema === "codex.chatgpt.oracle-workflow/v1") {
+      validateWorkflowStateConsistency(parsed);
+    }
+    return parsed;
+  }
+  async readIfPresent() {
+    try {
+      return await this.read();
+    } catch (error) {
+      if (error.code === "ENOENT") return void 0;
+      throw error;
+    }
+  }
+  assertUpdateAllowed(current, next, options) {
+    if (current.schema !== next.schema) {
+      throw new Error("STATE_SCHEMA_CHANGE_FORBIDDEN");
+    }
+    for (const field of IMMUTABLE_FIELDS) {
+      if (field in current && field in next && current[field] !== next[field]) {
+        throw new Error(`STATE_IDENTITY_MISMATCH: ${field}`);
+      }
+    }
+    if (!canAdvanceSessionAuthority(current.session_authority, next.session_authority)) {
+      throw new Error(
+        `SESSION_AUTHORITY_REGRESSION: ${current.session_authority} -> ${next.session_authority}`
+      );
+    }
+    if (current.session_authority !== "settled" && next.session_authority === "settled" && options.explicitSettle !== true) {
+      throw new Error("EXPLICIT_SETTLE_EVIDENCE_REQUIRED");
+    }
+    if (current.task_outcome !== "pending" && current.task_outcome !== next.task_outcome) {
+      throw new Error("TASK_OUTCOME_MUTATED");
+    }
+    if (current.schema === "codex.chatgpt.oracle-run-state/v1" && next.schema === "codex.chatgpt.oracle-run-state/v1" && current.oracle?.slug && next.oracle?.slug !== current.oracle.slug) {
+      throw new Error("EXACT_SLUG_MUTATED");
+    }
+    if (current.schema === "codex.chatgpt.oracle-workflow/v1" && next.schema === "codex.chatgpt.oracle-workflow/v1") {
+      if (next.revision < current.revision) throw new Error("SEMANTIC_REVISION_REGRESSION");
+      if (next.receipts.length < current.receipts.length) throw new Error("RECEIPT_HISTORY_TRUNCATED");
+      current.receipts.forEach((receipt, index) => {
+        if (JSON.stringify(receipt) !== JSON.stringify(next.receipts[index])) {
+          throw new Error("RECEIPT_HISTORY_MUTATED");
+        }
+      });
+    }
+  }
+};
+
+// src/core/run/runtime.ts
 async function exactDir(p) {
   const s = await lstat5(p).catch(() => void 0);
   if (!s?.isDirectory() || s.isSymbolicLink()) throw new Error("PROJECT_ROOT_INVALID");
@@ -1961,7 +2050,7 @@ async function exactDir(p) {
 async function exactFile(p) {
   const s = await lstat5(p).catch(() => void 0);
   if (!s?.isFile() || s.isSymbolicLink()) throw new Error("MISSION_PATH_INVALID");
-  const b = await readFile8(p);
+  const b = await readFile9(p);
   new TextDecoder("utf-8", { fatal: true }).decode(b);
   return b;
 }
@@ -1972,19 +2061,20 @@ async function runOracle(options) {
   const bytes = await exactFile(mission);
   const runId = options.runId ?? `run-${randomUUID5()}`;
   const dir = path9.resolve(options.runRoot ?? path9.join(root, ".awgpt", runId));
-  await mkdir7(dir, { recursive: true });
+  await mkdir8(dir, { recursive: true });
   const statePath = path9.join(dir, "state.json");
+  const stateStore = new StateStore(statePath);
   const initial = { schema: "codex.chatgpt.oracle-run-state/v1", run_id: runId, project_root: root, mission_path: mission, mode: "browser", session_authority: "pre_submit", transport_status: "pending", task_outcome: "pending" };
   const lock4 = new LockManager({ projectRoot: root });
   const release = await lock4.acquire();
   let retainLock = false;
   try {
-    await writeFile2(statePath, JSON.stringify(initial, null, 2) + "\n");
+    await stateStore.write(initial);
     if (options.devspace) {
       const q = await options.devspace.qualify(root, options.manifestPath);
       if (!q.ok) {
         const failed = { ...initial, session_authority: "settled", transport_status: "failed" };
-        await writeFile2(statePath, JSON.stringify(failed, null, 2));
+        await stateStore.write(failed, { explicitSettle: true });
         return { statePath, state: failed };
       }
     }
@@ -2018,14 +2108,14 @@ async function runOracle(options) {
     if (out.exitCode === 0) await writeFile2(path9.join(dir, "output.md"), stdout);
     retainLock = authority === "submitted_unknown" || authority === "live";
     const state = { ...initial, session_authority: authority, transport_status: out.exitCode === 0 ? "complete" : "failed", task_outcome: outcome, artifacts: { output: path9.join(dir, "output.md"), transcript: path9.join(dir, "transcript.md"), stdout: path9.join(dir, "stdout.log"), stderr: path9.join(dir, "stderr.log"), browser_temp: dir } };
-    await writeFile2(statePath, JSON.stringify(state, null, 2) + "\n");
+    await stateStore.write(state);
     return { statePath, state };
   } finally {
     if (!retainLock) await release();
   }
 }
 async function loadRunState(statePath) {
-  return OracleRunStateSchema.parse(JSON.parse(await readFile8(path9.resolve(statePath), "utf8")));
+  return OracleRunStateSchema.parse(JSON.parse(await readFile9(path9.resolve(statePath), "utf8")));
 }
 async function stopRecorded(statePath) {
   const state = await loadRunState(statePath);
@@ -2034,11 +2124,13 @@ async function stopRecorded(statePath) {
   const records = (await registry.list()).filter((r) => r.run_id === state.run_id && path9.resolve(r.project_root ?? "") === path9.resolve(state.project_root) && r.state === "running");
   if (records.length !== 1) throw new Error("STOP_OWNERSHIP_AMBIGUOUS");
   await terminatePersistedProcess(records[0]);
+  const settled = { ...state, session_authority: "settled", transport_status: "failed" };
+  await new StateStore(path9.resolve(statePath)).write(settled, { explicitSettle: true });
 }
 
 // src/core/forensics/no-submission.ts
 import { createHash as createHash6 } from "node:crypto";
-import { lstat as lstat6, readFile as readFile9, readdir as readdir4 } from "node:fs/promises";
+import { lstat as lstat6, readFile as readFile10, readdir as readdir4 } from "node:fs/promises";
 import * as path10 from "node:path";
 var PROMPT_NOT_OBSERVED = "Prompt did not appear in conversation before timeout (send may have failed)";
 var NO_LIVE_TAB = "No live ChatGPT tab matched session";
@@ -2052,7 +2144,7 @@ async function exactRegularFile(candidate, expected) {
   try {
     const stat = await lstat6(candidate);
     if (!stat.isFile() || stat.isSymbolicLink()) return void 0;
-    return await readFile9(candidate);
+    return await readFile10(candidate);
   } catch {
     return void 0;
   }
@@ -2072,7 +2164,7 @@ async function proveNoSubmission(statePath) {
   if (!stateStat?.isFile() || stateStat.isSymbolicLink()) return void 0;
   let raw;
   try {
-    raw = JSON.parse(await readFile9(absoluteState, "utf8"));
+    raw = JSON.parse(await readFile10(absoluteState, "utf8"));
   } catch {
     return void 0;
   }
@@ -2311,93 +2403,6 @@ function createCLI() {
   });
   return program2;
 }
-
-// src/core/state/store.ts
-import writeFileAtomic6 from "write-file-atomic";
-import { mkdir as mkdir8, readFile as readFile10 } from "node:fs/promises";
-import { dirname as dirname7, resolve as resolve10 } from "node:path";
-import * as lockFile3 from "proper-lockfile";
-var IMMUTABLE_FIELDS = ["run_id", "project_root", "mission_path"];
-var StateStore = class {
-  statePath;
-  constructor(statePath) {
-    this.statePath = resolve10(statePath);
-  }
-  async write(data, options = {}) {
-    const validated = PersistentStateSchema.parse(data);
-    if (validated.schema === "codex.chatgpt.oracle-workflow/v1") {
-      validateWorkflowStateConsistency(validated);
-    }
-    await mkdir8(dirname7(this.statePath), { recursive: true });
-    const release = await lockFile3.lock(this.statePath, {
-      realpath: false,
-      retries: { retries: 20, minTimeout: 5, maxTimeout: 50 },
-      stale: 3e4,
-      update: 1e4
-    });
-    try {
-      const current = await this.readIfPresent();
-      if (current) {
-        this.assertUpdateAllowed(current, validated, options);
-      }
-      await writeFileAtomic6(this.statePath, `${JSON.stringify(validated, null, 2)}
-`, {
-        fsync: true
-      });
-    } finally {
-      await release();
-    }
-  }
-  async read() {
-    const raw = await readFile10(this.statePath, "utf8");
-    const parsed = PersistentStateSchema.parse(JSON.parse(raw));
-    if (parsed.schema === "codex.chatgpt.oracle-workflow/v1") {
-      validateWorkflowStateConsistency(parsed);
-    }
-    return parsed;
-  }
-  async readIfPresent() {
-    try {
-      return await this.read();
-    } catch (error) {
-      if (error.code === "ENOENT") return void 0;
-      throw error;
-    }
-  }
-  assertUpdateAllowed(current, next, options) {
-    if (current.schema !== next.schema) {
-      throw new Error("STATE_SCHEMA_CHANGE_FORBIDDEN");
-    }
-    for (const field of IMMUTABLE_FIELDS) {
-      if (field in current && field in next && current[field] !== next[field]) {
-        throw new Error(`STATE_IDENTITY_MISMATCH: ${field}`);
-      }
-    }
-    if (!canAdvanceSessionAuthority(current.session_authority, next.session_authority)) {
-      throw new Error(
-        `SESSION_AUTHORITY_REGRESSION: ${current.session_authority} -> ${next.session_authority}`
-      );
-    }
-    if (current.session_authority !== "settled" && next.session_authority === "settled" && options.explicitSettle !== true) {
-      throw new Error("EXPLICIT_SETTLE_EVIDENCE_REQUIRED");
-    }
-    if (current.task_outcome !== "pending" && current.task_outcome !== next.task_outcome) {
-      throw new Error("TASK_OUTCOME_MUTATED");
-    }
-    if (current.schema === "codex.chatgpt.oracle-run-state/v1" && next.schema === "codex.chatgpt.oracle-run-state/v1" && current.oracle?.slug && next.oracle?.slug !== current.oracle.slug) {
-      throw new Error("EXACT_SLUG_MUTATED");
-    }
-    if (current.schema === "codex.chatgpt.oracle-workflow/v1" && next.schema === "codex.chatgpt.oracle-workflow/v1") {
-      if (next.revision < current.revision) throw new Error("SEMANTIC_REVISION_REGRESSION");
-      if (next.receipts.length < current.receipts.length) throw new Error("RECEIPT_HISTORY_TRUNCATED");
-      current.receipts.forEach((receipt, index) => {
-        if (JSON.stringify(receipt) !== JSON.stringify(next.receipts[index])) {
-          throw new Error("RECEIPT_HISTORY_MUTATED");
-        }
-      });
-    }
-  }
-};
 
 // src/core/orchestrator/state.ts
 import { z as z6 } from "zod";

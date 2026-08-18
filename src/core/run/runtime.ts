@@ -5,6 +5,7 @@ import { execa } from 'execa';
 import { LockManager } from '../state/locks.js';
 import { ProcessRegistry, terminatePersistedProcess } from '../process/registry.js';
 import { parseTaskOutcome, OracleRunStateSchema, type OracleRunState, type SessionAuthority } from '../../types/index.js';
+import { StateStore } from '../state/store.js';
 
 export interface DevSpaceQualifier { qualify(root: string, manifest?: string): Promise<{ ok: boolean; reason?: string }> }
 export interface RunOptions { projectRoot: string; missionPath: string; runRoot?: string; oracleCommand?: string[]; oracleArgs?: string[]; manifestPath?: string; localGate?: string[]; oracleHome?: string; devspace?: DevSpaceQualifier; runId?: string }
@@ -18,12 +19,13 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   const bytes = await exactFile(mission); const runId = options.runId ?? `run-${randomUUID()}`;
   const dir = path.resolve(options.runRoot ?? path.join(root, '.awgpt', runId)); await mkdir(dir,{recursive:true});
   const statePath = path.join(dir,'state.json');
+  const stateStore = new StateStore(statePath);
   const initial: OracleRunState = { schema:'codex.chatgpt.oracle-run-state/v1', run_id:runId, project_root:root, mission_path:mission, mode:'browser', session_authority:'pre_submit', transport_status:'pending', task_outcome:'pending' };
   const lock = new LockManager({ projectRoot: root }); const release = await lock.acquire();
   let retainLock = false;
   try {
-    await writeFile(statePath, JSON.stringify(initial,null,2)+'\n');
-    if (options.devspace) { const q=await options.devspace.qualify(root, options.manifestPath); if (!q.ok) { const failed={...initial,session_authority:'settled' as SessionAuthority,transport_status:'failed' as const}; await writeFile(statePath,JSON.stringify(failed,null,2)); return {statePath,state:failed}; } }
+    await stateStore.write(initial);
+    if (options.devspace) { const q=await options.devspace.qualify(root, options.manifestPath); if (!q.ok) { const failed={...initial,session_authority:'settled' as SessionAuthority,transport_status:'failed' as const}; await stateStore.write(failed, { explicitSettle: true }); return {statePath,state:failed}; } }
     if (options.localGate) { const gate=await execa(options.localGate[0], options.localGate.slice(1),{cwd:root,shell:false,reject:false}); if (gate.exitCode!==0) throw new Error('LOCAL_GATE_FAILED'); }
     const command = options.oracleCommand ?? ['oracle']; const args=[...command.slice(1), ...(options.oracleArgs??[]), '--project-root',root,'--mission',mission,'--run-id',runId];
     const child=execa(command[0],args,{cwd:root,shell:false,reject:false,env:{...process.env, ...(options.oracleHome?{ORACLE_HOME:options.oracleHome}:{})}});
@@ -37,7 +39,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
     if (out.exitCode===0) await writeFile(path.join(dir,'output.md'), stdout);
     retainLock = (authority as SessionAuthority) === 'submitted_unknown' || (authority as SessionAuthority) === 'live';
     const state: OracleRunState={...initial,session_authority:authority,transport_status:out.exitCode===0?'complete':'failed',task_outcome:outcome,artifacts:{output:path.join(dir,'output.md'),transcript:path.join(dir,'transcript.md'),stdout:path.join(dir,'stdout.log'),stderr:path.join(dir,'stderr.log'),browser_temp:dir}};
-    await writeFile(statePath,JSON.stringify(state,null,2)+'\n'); return {statePath,state};
+    await stateStore.write(state); return {statePath,state};
   } finally { if (!retainLock) await release(); }
 }
 export async function loadRunState(statePath:string){ return OracleRunStateSchema.parse(JSON.parse(await readFile(path.resolve(statePath),'utf8'))) }
@@ -48,4 +50,6 @@ export async function stopRecorded(statePath:string): Promise<void> {
   const records = (await registry.list()).filter(r => r.run_id === state.run_id && path.resolve(r.project_root ?? '') === path.resolve(state.project_root) && r.state === 'running');
   if (records.length !== 1) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
   await terminatePersistedProcess(records[0]);
+  const settled = { ...state, session_authority: 'settled' as const, transport_status: 'failed' as const };
+  await new StateStore(path.resolve(statePath)).write(settled, { explicitSettle: true });
 }
