@@ -6,6 +6,9 @@ import { preflightCopiedProfile } from '../core/process/auth-preflight.js';
 import { recoverChatGptLogin } from '../core/process/cookie-recovery.js';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { runOracle, loadRunState } from '../core/run/runtime.js';
+import { planExactRecovery, executeExactRecovery } from '../core/forensics/recovery.js';
+import { proveNoSubmission } from '../core/forensics/no-submission.js';
 
 export function createCLI(): Command {
   const program = new Command();
@@ -20,6 +23,7 @@ export function createCLI(): Command {
     .option('--project-root <path>', 'exact project root', process.cwd())
     .option('--copy-profile <path>', 'manual-login profile seed')
     .option('--devspace-url <url>', 'local DevSpace MCP probe URL')
+    .option('--oracle-home <path>', 'isolated Oracle home')
     .option('--state <path...>', 'specific Oracle state files to validate')
     .option('--recover', 'emit the single safe next recovery action')
     .option('--open-profile-login', 'open a generic ChatGPT login in a new isolated profile')
@@ -40,6 +44,7 @@ export function createCLI(): Command {
         devspaceUrl: options.devspaceUrl,
         statePaths: options.state,
         recover: options.recover,
+        oracleHome: options.oracleHome,
       });
       console.log(JSON.stringify(report, null, 2));
       if (report.status === 'FAIL') process.exitCode = 1;
@@ -122,9 +127,24 @@ export function createCLI(): Command {
   program
     .command('run')
     .description('Run Oracle workflow')
-    .action(async () => {
-      console.log('Run command (stub)');
+    .requiredOption('--project-root <path>')
+    .requiredOption('--mission <path>')
+    .option('--run-root <path>')
+    .option('--manifest <path>')
+    .option('--oracle-command <path>')
+    .option('--oracle-arg <value...>')
+    .option('--oracle-home <path>')
+    .action(async options => {
+      try { console.log(JSON.stringify(await runOracle({ projectRoot: options.projectRoot, missionPath: options.mission, runRoot: options.runRoot, manifestPath: options.manifest, oracleCommand: options.oracleCommand ? [options.oracleCommand] : undefined, oracleArgs: options.oracleArg, oracleHome: options.oracleHome }), null, 2)); }
+      catch (e) { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; }
     });
+
+  program.command('recover').requiredOption('--state <path>').requiredOption('--action <action>', 'live or harvest')
+    .action(async o => { try { const plan=await planExactRecovery(o.state,o.action); console.log(JSON.stringify(await executeExactRecovery(plan),null,2)); } catch(e){ console.error(e instanceof Error?e.message:e); process.exitCode=1; } });
+  program.command('audit').requiredOption('--state <path>').description('Prove no submission without launching Oracle')
+    .action(async o => { const evidence=await proveNoSubmission(o.state); console.log(JSON.stringify(evidence ?? {ok:false},null,2)); if(!evidence) process.exitCode=2; });
+  program.command('stop').requiredOption('--state <path>').description('Refuse unsafe stop unless state is owned and live')
+    .action(async o => { try { const state=await loadRunState(o.state); if(state.session_authority!=='live' && state.session_authority!=='submitted_unknown') throw new Error('STOP_UNSAFE_AUTHORITY'); throw new Error('STOP_REQUIRES_ACTIVE_SUPERVISOR'); } catch(e){ console.error(e instanceof Error?e.message:e); process.exitCode=1; } });
 
   return program;
 }
