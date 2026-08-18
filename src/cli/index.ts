@@ -163,5 +163,7 @@ export function createCLI(): Command {
 
 function errorCode(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
+  if (message.startsWith('ENOENT') && message.includes('install-manifest.json')) return 'LIFECYCLE_MANIFEST_MISSING';
+  if (message.includes('Expected') || message.includes('Invalid input') || message.includes('ZodError')) return 'LIFECYCLE_MANIFEST_INVALID';
   return message.split(':', 1)[0] || 'LIFECYCLE_FAILED';
 }
