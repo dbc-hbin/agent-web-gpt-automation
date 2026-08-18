@@ -1,6 +1,6 @@
 import { execa } from 'execa';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, rename, rm, writeFile, realpath } from 'node:fs/promises';
 import * as path from 'node:path';
 import writeFileAtomic from 'write-file-atomic';
 import { OracleSessionStateSchema, parseTaskOutcome } from '../../types/index.js';
@@ -82,6 +82,17 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
   status: 'complete' | 'session_live' | 'terminal_observed' | 'attention_required';
   session_authority: string;
 }> {
+  const preRaw = JSON.parse(await readFile(plan.state_path, 'utf8')) as Record<string, unknown>;
+  const pre = OracleSessionStateSchema.parse(preRaw);
+  const mission = (pre.mission ?? {}) as Record<string, unknown>;
+  if (typeof mission.path === 'string' && typeof mission.sha256 === 'string') {
+    const root = await realpath(plan.project_root);
+    const missionPath = await realpath(mission.path).catch(() => { throw new Error('RECOVERY_MISSION_INVALID'); });
+    const rel = path.relative(root, missionPath);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('RECOVERY_MISSION_ROOT_MISMATCH');
+    const currentSha = createHash('sha256').update(await readFile(missionPath)).digest('hex');
+    if (currentSha !== mission.sha256) throw new Error('RECOVERY_MISSION_MUTATED');
+  }
   const runDir = path.dirname(plan.output_path);
   await mkdir(runDir, { recursive: true });
   const stdoutPath = path.join(runDir, `recovery-${plan.action}-stdout.log`);
