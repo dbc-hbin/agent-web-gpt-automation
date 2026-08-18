@@ -222,7 +222,7 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
       receipt_id: randomUUID(), run_id: workflow.run_id, stage: 'recovery', status: 'completed',
       input_sha256: previous.output_sha256, output_sha256: artifactHash,
       previous_receipt_sha256: receiptSha256(previous), next_stage: status === 'complete' ? 'complete' : 'attention_required',
-      prologue: { ...previous.prologue }, external_actions: [{ kind: 'oracle', status: 'completed' }],
+      prologue: { ...previous.prologue, semantic_revision: previous.prologue.semantic_revision + 1 }, external_actions: [{ kind: 'oracle', status: 'completed' }],
       recovery: { session_authority: 'settled', attempt: previous.recovery.attempt + 1, exact_slug: plan.locator },
     };
     const next = { ...workflow, stage: receipt.next_stage, session_authority: 'settled' as const,

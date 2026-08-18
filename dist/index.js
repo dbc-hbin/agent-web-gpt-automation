@@ -869,7 +869,7 @@ async function executeExactRecovery(plan) {
       output_sha256: artifactHash,
       previous_receipt_sha256: receiptSha256(previous),
       next_stage: status === "complete" ? "complete" : "attention_required",
-      prologue: { ...previous.prologue },
+      prologue: { ...previous.prologue, semantic_revision: previous.prologue.semantic_revision + 1 },
       external_actions: [{ kind: "oracle", status: "completed" }],
       recovery: { session_authority: "settled", attempt: previous.recovery.attempt + 1, exact_slug: plan.locator }
     };
@@ -2284,7 +2284,7 @@ ${versionCheck.stderr}`.trim();
     const state = { ...initial, task_outcome_contract: "v1", session_authority: authority, transport_status: authority === "settled" || authority === "terminal_observed" ? "complete" : out.exitCode === 0 ? "pending" : "failed", task_outcome: outcome, process: child.pid ? { pid: child.pid, command: command[0], args } : void 0, artifacts: { output: outputPath, transcript: path9.join(dir, "transcript.md"), stdout: path9.join(dir, "stdout.log"), stderr: path9.join(dir, "stderr.log"), browser_temp: dir } };
     const settled = authority === "settled";
     const outputSha = sha(durable);
-    const receipt = { receipt_id: randomUUID6(), run_id: runId, stage: "plan", status: settled ? "completed" : "failed", input_sha256: sha(bytes), output_sha256: outputSha, previous_receipt_sha256: null, next_stage: settled ? "complete" : "attention_required", prologue: { project_root: root, mission_sha256: sha(bytes), profile: "default", semantic_revision: 0 }, external_actions: [{ kind: "oracle", status: settled ? "completed" : "failed" }], recovery: { session_authority: authority, attempt: 0, exact_slug: slug } };
+    const receipt = { receipt_id: randomUUID6(), run_id: runId, stage: "plan", status: settled || authority === "submitted_unknown" ? "completed" : "failed", input_sha256: sha(bytes), output_sha256: outputSha, previous_receipt_sha256: null, next_stage: settled ? "complete" : authority === "submitted_unknown" ? "recovery" : "attention_required", prologue: { project_root: root, mission_sha256: sha(bytes), profile: "default", semantic_revision: 0 }, external_actions: [{ kind: "oracle", status: settled ? "completed" : "failed" }], recovery: { session_authority: authority, attempt: 0, exact_slug: slug } };
     await new StateStore(workflowPath).write({ ...wfBase, stage: receipt.next_stage, session_authority: authority, task_outcome: outcome, receipts: [receipt] }, { explicitSettle: settled });
     await stateStore.write(state, { explicitSettle: authority === "settled" });
     return { statePath, state };
