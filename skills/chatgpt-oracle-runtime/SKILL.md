@@ -14,8 +14,7 @@ explicitly requested qualified Pro uses the same app with mission-scoped
 read/write authority. `deep-research` and `pro-attachment` use Oracle
 attachment transport: `deep-research` passes the mission and analysis evidence/code
 as attachments (or ZIP) without DevSpace. When passing code and analysis documents,
-summarize and bundle them into a compact ZIP packet (e.g. via `bin/chatgpt_context_packer`)
-excluding `.git`, `node_modules`, `__pycache__`, `.venv`, and binary files to stay well within Oracle's 1 MiB per-file limit.
+keep attachments to the files explicitly requested by the supported Oracle transport; this package does not ship a context packer.
 
 `chatgpt_oracle_dispatch` supports exactly `direct`, `plan`, `review`, `edit`,
 `orchestrator`, `deep-research`, `manual`, and `pro`. `manual` is a supported
@@ -83,12 +82,8 @@ A nonzero Oracle exit after launch, including a browser response timeout, is
 `attention_required` rather than proof that the web session failed. It retains
 same-project ownership and permits only exact-slug `live` or `harvest`
 recovery; it never authorizes a replacement submission.
-`--browser-timeout` is a browser observation window, not proof that the web run
-ended. The default is aligned with the observed provider boundary. Separately,
-4,800 seconds is only a caution/status-audit threshold: the runner records the
-exact slug, process liveness, artifact progress, known conversation binding,
-and terminal evidence, then keeps waiting on the same process. It never kills,
-fails, releases, or replaces a run because that threshold elapsed.
+The `awgpt` wrapper exposes no browser observation-duration switch. Observe long
+runs with `awgpt doctor`, and recover only the recorded session with `awgpt recover`.
 
 ## Recovery
 
@@ -138,8 +133,7 @@ Control state, Oracle output, and transcripts live under
 `%AGENT_WEB_GPT_HOME%\state\chatgpt-oracle`, outside the DevSpace-writable
 project.
 
-Use `chatgpt_oracle_comprehensive` for the bounded plan → optional
-Pro/Multi → review → implementation → final web gate flow. Each web stage
-writes the next mission; the host validates only UTF-8, identity, paths, and
-hashes. Use `chatgpt_oracle_multi` for independent solver sessions in waves
-of at most five and one merger over handoff files.
+Comprehensive and multi-session orchestration are not packaged CLI capabilities
+in this release. Use one supported `awgpt run` mission at a time; staged or
+parallel workflows require an external orchestrator and must not be represented
+as an `awgpt` subcommand.

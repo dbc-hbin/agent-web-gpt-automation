@@ -31,6 +31,27 @@ describe('TS-native package surfaces', () => {
     expect(help).not.toContain('--project-root <path> (required)');
   });
 
+  it('keeps documented awgpt commands reachable and free of retired binaries', async () => {
+    const { createCLI } = await import('../src/cli/index.js');
+    const cli = createCLI();
+    const commands = new Map(cli.commands.map(command => [command.name(), command]));
+    const retired = /(?:bin\/|chatgpt_context_packer|chatgpt_oracle_(?:multi|comprehensive)|--browser-timeout|post-register|\bensure\b)/i;
+    for (const name of skills) {
+      const text = await readFile(path.join(root, 'skills', name, 'SKILL.md'), 'utf8');
+      expect(text).not.toMatch(retired);
+      for (const match of text.matchAll(/\bawgpt\s+([a-z-]+)([^`\n]*)/g)) {
+        const command = commands.get(match[1]);
+        expect(command, `${name}: awgpt ${match[1]}`).toBeDefined();
+        if (match[1] === 'workspace') {
+          expect(command?.commands.map(child => child.name())).toEqual(expect.arrayContaining(['setup', 'doctor']));
+        } else {
+          const help = command?.helpInformation() ?? '';
+          for (const option of (match[2].match(/--[a-z-]+/g) ?? [])) expect(help, `${name}: ${option}`).toContain(option);
+        }
+      }
+    }
+  });
+
   it('resolves packaged source independently of cwd', () => {
     expect(resolvePackageSource()).toBe(root);
   });

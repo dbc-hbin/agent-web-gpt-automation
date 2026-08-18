@@ -5,8 +5,9 @@ description: Run genuine parallel regular ChatGPT sessions through Oracle, with 
 
 # Oracle Web Multi-GPT
 
-Use `bin/chatgpt_oracle_multi` with schema
-`codex.chatgpt.oracle-multi/v1`. Required fields:
+This identity is retained for compatibility, but the packaged CLI does not
+implement a multi-session runner, solver manifest, or merger. Do not invoke
+the retired multi runner or invent an `oracle-multi` schema.
 
 - absolute `project_root`, project-contained `output_dir`
 - `solvers`: 2..25 unique safe lane IDs and absolute mission paths
@@ -30,5 +31,6 @@ launches use a short parent-scoped mutex. On Windows each lane uses a separate
 throwaway copy of the signed-in Oracle profile, preventing one solver from
 closing or taking over another solver's Chrome session.
 
-No attachments, app/settings automation, broad tab cleanup, `--force`,
-restart, or silent resubmission. Oracle owns one-shot tab archival.
+Parallel solvers, mergers, and cross-session handoffs are staged/unsupported in
+this package. No attachments, app/settings automation, broad tab cleanup,
+`--force`, restart, or silent resubmission.

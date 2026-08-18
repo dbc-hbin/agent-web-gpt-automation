@@ -19,7 +19,7 @@ preserve unrelated local customizations.
 3. For non-trivial GPT automation design or implementation, use the selected
    current GPT workflow only when the user asked for web delegation. Every new
    ChatGPT run uses Oracle:
-   - regular modes, comprehensive stages, and Web Multi use Oracle plus the manually registered DevSpace app;
+   - supported regular modes use Oracle plus the manually registered DevSpace app; comprehensive and Web Multi stages are not packaged runners;
    - Deep Research operates without DevSpace using attachment/ZIP transport;
    - regular web work defaults to the highest supported non-Pro reasoning tier;
      only explicit user opt-in selects qualified Pro with `GPT-5.6 Sol` at the

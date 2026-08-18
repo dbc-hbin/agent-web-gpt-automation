@@ -9,7 +9,10 @@ description: Part of the current Oracle prompt-design path; use before submittin
 
 Use this skill to give each question the cognitive posture its purpose needs. Construction should remain constructive, research evidence-seeking, synthesis integrative, execution adaptive, and review adversarial.
 
-This skill is a shared prompt design layer for regular DevSpace modes (direct, plan, review, edit, orchestrator), Pro modes (pro-devspace, pro-attachment), Deep Research, and Web Multi-GPT. It does not own browser execution, approval authority, or deterministic verification.
+This skill is a shared prompt design layer for the supported single-session
+`awgpt run` path. It does not own browser execution, approval authority, or
+deterministic verification; comprehensive and Web Multi execution are not
+packaged capabilities.
 
 ## Question Type
 
@@ -64,7 +67,7 @@ Append an adversarial module only for explicit review/counterexample roles: requ
 
 Context selection must match the question type.
 
-- New non-Pro direct, plan, review, edit, orchestrator, comprehensive, and Web Multi work uses Oracle plus the manually registered `DevSpace` workspace. The composer receives only `@DevSpace` and the absolute UTF-8 mission path. Deep Research operates without DevSpace: it passes the mission and evidence/code packet (or ZIP) as attachments. Summarize and package only relevant source code and analysis documents (under 1 MiB via `bin/chatgpt_context_packer`), excluding `.git`, `node_modules`, `.venv`, and binaries.
+- New work uses Oracle plus the manually registered `DevSpace` workspace through `awgpt run`; the composer receives only `@DevSpace` and the absolute UTF-8 mission path. This package does not ship an attachment context packer or multi/comprehensive runner.
 - Regular web work defaults to `gpt-5.6` at the highest supported non-Pro reasoning tier. Pro is quota-limited and may be designed only after an explicit user request; never infer or auto-upgrade to it. Qualified Pro uses Oracle, `GPT-5.6 Sol` at the Pro effort, and read/write DevSpace at the exact project root. Its action authority is mission-scoped and must name allowed files, commands, and external-state boundaries. `pro-attachment` uses exact snapshot attachments only for immutable/external or DevSpace-unreadable evidence; it is never an automatic fallback.
 - Code/design/debug/refactor: give the regular web GPT a narrow project-contained mission and let it inspect the live workspace through DevSpace. Do not duplicate the workspace into attachments or a ZIP.
 - Planning/review: identify the live draft, research, acceptance criteria, local guidance, and known risks by project-relative paths in the mission. Use an attachment packet only when the exact immutable snapshot is the requested evidence or DevSpace cannot read the artifact.
@@ -80,7 +83,7 @@ This skill designs the prompt packet; it must not erase local project question t
 - Every new Oracle stage is a one-shot session with its own exact slug. Do not add legacy `session_policy`, `session_affinity_key`, `inquiry_chain_id`, or `chat_url` fields to a new Oracle manifest.
 - Preserve semantic continuity in project-contained mission and handoff files. In comprehensive mode, the completing web stage writes the next stage's exact mission and receipt; the calling agent validates bytes, paths, hashes, identity, and transition without rewriting its meaning.
 - Recovery uses only the stored exact Oracle slug with `harvest` or `live`. It never restarts, resubmits, or changes the model/reasoning level.
-- Genuine Web Multi uses distinct Oracle sessions and copied profiles for independent lanes. Use it only when simultaneous independent solvers materially help; never simulate multiple roles inside one session and never replace it with calling-agent exploration.
+- Multi-session execution is staged/unsupported in this package; do not claim it is provided by `awgpt`.
 - Local `AGENTS.md`, local skills, and task-specific question templates outrank the shared integrity contract. Preserve their answer shape and apply only compatible evidence and session metadata.
 - Independent approval, plan review, verifier, and release gates use fresh stages with explicitly scoped evidence.
 

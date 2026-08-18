@@ -6,8 +6,8 @@ description: Run 초절약모드 for expensive or long local-agent tasks by keep
 # Ultra Economy Mode
 
 Minimize local model cost without treating the small local model as the main
-reasoning surface. Use the existing Oracle comprehensive engine with the
-`ultra-economy` profile.
+reasoning surface. The packaged CLI supports only the guarded single-session
+`awgpt run` path; comprehensive multi-stage orchestration is not implemented.
 
 ## Activation gate
 
@@ -56,11 +56,12 @@ one-time exact-root qualification
   -> one local deterministic gate
 ```
 
-Use `bin/chatgpt_oracle_comprehensive` with these manifest fields:
+Do not invoke a nonexistent comprehensive runner or schema. After the handshake,
+use a supported mission preview:
 
 ```json
 {
-  "schema": "codex.chatgpt.oracle-comprehensive/v1",
+  "schema": "codex.chatgpt.oracle-run/v1",
   "workflow_profile": "ultra-economy",
   "initial_stage": "pro"
 }
@@ -71,10 +72,9 @@ The local commander owns the one-time conversational activation handshake; the
 engine does not re-read or re-verify the task model at later stages. A manifest
 self-declaration is not a substitute for the handshake.
 
-The engine must fail closed before submission when the profile, Pro-first
-stage, exact root qualification, or minimum four-stage budget is missing. Do
-not substitute an attachment for readable DevSpace, and do not use Pro as the
-first connector-health probe.
+There is no packaged engine-level Pro-first stage or minimum-stage budget. Keep
+the exact-root qualification and do not use Pro as the first connector-health
+probe; additional stages must be coordinated outside this package.
 
 ## Failure and residual work
 

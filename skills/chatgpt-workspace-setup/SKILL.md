@@ -97,9 +97,9 @@ Owner credential, OAuth database, roots, and Funnel hostname:
 awgpt doctor --project-root C:\projects\example --recover
 ```
 
-`post-register` also recycles only the exclusive managed HTTPS port before
-reasserting the same Funnel target. It never uses the global `funnel reset`
-operation and preserves a port that has additional path handlers.
+The packaged helper has no post-registration repair subcommand. After manual
+registration, use the supported read-only `awgpt workspace doctor` command and
+make any DevSpace/Tailscale service changes with their own documented tools.
 
 Then verify the manually registered app with a fresh **regular, non-Pro**
 Oracle `@codex` read-only probe that opens the exact project root and reads a
@@ -122,14 +122,12 @@ This is read-only and checks only local DevSpace, then Funnel status, then the p
 awgpt doctor --project-root C:\projects\one
 ```
 
-If the public endpoint is healthy but a ChatGPT call still fails immediately
-after a manual registration or reconnect, run `post-register` once and repeat
-only the regular read-only Oracle probe. If that still fails, report the same
-registration URL and stop. Do not re-register the app automatically or loop
-the refresh.
+If the public endpoint is healthy but a ChatGPT call still fails after manual
+registration, report the registration URL and stop; do not loop or invent a
+post-registration repair command.
 
-For an explicitly requested service/Funnel repair, use the idempotent `ensure`
-command after DevSpace starts:
+For an explicitly requested service/Funnel repair, use the supported recovery
+diagnostic after DevSpace starts:
 
 ```powershell
 awgpt doctor --project-root C:\projects\one --recover
