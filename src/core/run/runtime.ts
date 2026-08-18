@@ -23,7 +23,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   const rel = path.relative(root, mission);
   if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new Error('MISSION_ROOT_MISMATCH');
   const bytes = await exactFile(mission); const runId = options.runId ?? `run-${randomUUID()}`;
-  if (options.manifestPath) { const manifest = OracleManifestSchema.parse(JSON.parse(await readFile(options.manifestPath,'utf8'))); if (path.resolve(manifest.project_root)!==root || path.resolve(manifest.mission_path)!==mission) throw new Error('MANIFEST_BINDING_MISMATCH'); }
+  if (options.manifestPath) { const mp=path.resolve(options.manifestPath); const ms=await lstat(mp).catch(()=>undefined); if(!ms?.isFile()||ms.isSymbolicLink()) throw new Error('MANIFEST_PATH_INVALID'); const manifest = OracleManifestSchema.parse(JSON.parse(await readFile(await realpath(mp),'utf8'))); if (path.resolve(manifest.project_root)!==root || path.resolve(manifest.mission_path)!==mission) throw new Error('MANIFEST_BINDING_MISMATCH'); }
   const dir = path.resolve(options.runRoot ?? path.join(root, '.awgpt', runId));
   await mkdir(path.dirname(dir), { recursive: true });
   await mkdir(dir,{recursive:false}).catch((e: any) => { if (e.code === 'EEXIST') throw new Error('RUN_ID_COLLISION'); throw e; });
@@ -44,7 +44,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
     if (options.localGate) { const gate=await execa(options.localGate[0], options.localGate.slice(1),{cwd:root,shell:false,reject:false}); if (gate.exitCode!==0) throw new Error('LOCAL_GATE_FAILED'); }
     const args=[...command.slice(1), '--engine','browser','--slug',slug,'--prompt',bytes.toString('utf8'),'--write-output',outputPath, ...(options.oracleArgs??[])];
     const child=execa(command[0],args,{cwd:root,shell:false,reject:false,env:{...process.env, ...(options.oracleHome?{ORACLE_HOME:options.oracleHome}:{})}});
-    await stateStore.write({...initial, session_authority:'submitted_unknown', transport_status:'pending'}, { explicitSettle: false });
+    await stateStore.write({...initial, session_authority:'submitted_unknown', transport_status:'pending', process: child.pid ? { pid: child.pid, command: command[0], args } : undefined }, { explicitSettle: false });
     const registry = new ProcessRegistry(path.join(dir,'processes.json'));
     if (child.pid) await registry.upsert({id:runId,pid:child.pid,command:command[0],args,cwd:root,project_root:root,run_id:runId,started_at:new Date().toISOString(),state:'running'});
     const out=await child;
@@ -57,7 +57,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
     await writeFile(path.join(dir,'transcript.md'), stdout);
     if (authority === 'terminal_observed' && outcome !== 'pending') authority = 'settled';
     retainLock = ['submitted_unknown','live','terminal_observed'].includes(authority);
-    const state: OracleRunState={...initial,session_authority:authority,transport_status:authority === 'terminal_observed' ? 'complete' : out.exitCode===0?'pending':'failed',task_outcome:outcome,artifacts:{output:outputPath,transcript:path.join(dir,'transcript.md'),stdout:path.join(dir,'stdout.log'),stderr:path.join(dir,'stderr.log'),browser_temp:dir}};
+    const state: OracleRunState={...initial,session_authority:authority,transport_status:authority === 'terminal_observed' ? 'complete' : out.exitCode===0?'pending':'failed',task_outcome:outcome,process: child.pid ? {pid:child.pid,command:command[0],args} : undefined,artifacts:{output:outputPath,transcript:path.join(dir,'transcript.md'),stdout:path.join(dir,'stdout.log'),stderr:path.join(dir,'stderr.log'),browser_temp:dir}};
     const outputSha = sha(durable); const receipt = { receipt_id: randomUUID(), run_id: runId, stage:'plan' as const, status: authority==='terminal_observed'?'completed' as const:'failed' as const, input_sha256: sha(bytes), output_sha256: outputSha, previous_receipt_sha256:null, next_stage: authority==='terminal_observed'?'complete' as const:'attention_required' as const, prologue:{project_root:root,mission_sha256:sha(bytes),profile:'default' as const,semantic_revision:0}, external_actions:[{kind:'oracle' as const,status: authority==='terminal_observed'?'completed' as const:'failed' as const}], recovery:{session_authority:authority,attempt:0,exact_slug:slug} };
     await new StateStore(workflowPath).write({...wfBase, stage:receipt.next_stage, session_authority:authority, task_outcome:outcome, receipts:[receipt]});
     await stateStore.write(state, { explicitSettle: authority === 'settled' }); return {statePath,state};
