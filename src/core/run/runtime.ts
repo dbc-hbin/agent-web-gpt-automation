@@ -23,7 +23,8 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   const rel = path.relative(root, mission);
   if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new Error('MISSION_ROOT_MISMATCH');
   const bytes = await exactFile(mission); const runId = options.runId ?? `run-${randomUUID()}`;
-  if (options.manifestPath) { const mp=path.resolve(options.manifestPath); const ms=await lstat(mp).catch(()=>undefined); if(!ms?.isFile()||ms.isSymbolicLink()) throw new Error('MANIFEST_PATH_INVALID'); const manifest = OracleManifestSchema.parse(JSON.parse(await readFile(await realpath(mp),'utf8'))); if (path.resolve(manifest.project_root)!==root || path.resolve(manifest.mission_path)!==mission) throw new Error('MANIFEST_BINDING_MISMATCH'); }
+  let manifest: any;
+  if (options.manifestPath) { const mp=path.resolve(options.manifestPath); const ms=await lstat(mp).catch(()=>undefined); if(!ms?.isFile()||ms.isSymbolicLink()) throw new Error('MANIFEST_PATH_INVALID'); manifest = OracleManifestSchema.parse(JSON.parse(await readFile(await realpath(mp),'utf8'))); if (path.resolve(manifest.project_root)!==root || path.resolve(manifest.mission_path)!==mission) throw new Error('MANIFEST_BINDING_MISMATCH'); }
   const dir = path.resolve(options.runRoot ?? path.join(root, '.awgpt', runId));
   await mkdir(path.dirname(dir), { recursive: true });
   await mkdir(dir,{recursive:false}).catch((e: any) => { if (e.code === 'EEXIST') throw new Error('RUN_ID_COLLISION'); throw e; });
@@ -31,7 +32,9 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   const workflowPath = path.join(dir,'workflow.json');
   const stateStore = new StateStore(statePath);
   const slug = `run-${sha(bytes).slice(0,4)}-${sha(runId).slice(0,4)}-${sha(root).slice(0,4)}`;
-  const command = options.oracleCommand ?? ['oracle'];
+  const command = options.oracleCommand ?? (process.platform === 'win32' ? ['npx.cmd','--yes','@steipete/oracle@0.17.1'] : ['npx','--yes','@steipete/oracle@0.17.1']);
+  const versionCheck = await execa(command[0], [...command.slice(1), '--version'], { cwd: root, shell: false, reject: false });
+  if (versionCheck.exitCode !== 0 || !/\b0\.17\.1\b/.test(`${versionCheck.stdout}\n${versionCheck.stderr}`)) throw new Error('ORACLE_VERSION_UNSUPPORTED');
   const outputPath = path.join(dir,'output.md');
   const initial: OracleRunState = { schema:'codex.chatgpt.oracle-run-state/v1', run_id:runId, project_root:root, mission_path:mission, mission_sha256:sha(bytes), mode:'browser', session_authority:'pre_submit', transport_status:'pending', task_outcome:'pending', oracle:{resolved_version:'0.17.1',session_locator:slug,slug,command} };
   const lock = new LockManager({ projectRoot: root }); const release = await lock.acquire();
@@ -40,9 +43,19 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
     await stateStore.write(initial);
     const wfBase: WorkflowRunState = { schema:'codex.chatgpt.oracle-workflow/v1', run_id:runId, project_root:root, mission_path:mission, profile:'default', stage:'plan', session_authority:'pre_submit', task_outcome:'pending', revision:0, receipts:[] };
     await new StateStore(workflowPath).write(wfBase);
-    if (options.devspace) { const q=await options.devspace.qualify(root, options.manifestPath); if (!q.ok) { const failed={...initial,session_authority:'settled' as SessionAuthority,transport_status:'failed' as const}; await stateStore.write(failed, { explicitSettle: true }); return {statePath,state:failed}; } }
-    if (options.localGate) { const gate=await execa(options.localGate[0], options.localGate.slice(1),{cwd:root,shell:false,reject:false}); if (gate.exitCode!==0) throw new Error('LOCAL_GATE_FAILED'); }
-    const args=[...command.slice(1), '--engine','browser','--slug',slug,'--prompt',bytes.toString('utf8'),'--write-output',outputPath, ...(options.oracleArgs??[])];
+    const preSubmitFailure = async (reason: string) => {
+      const failed={...initial,session_authority:'settled' as SessionAuthority,transport_status:'failed' as const,task_outcome:'NOT_EXECUTED' as const};
+      const receipt = { receipt_id: randomUUID(), run_id: runId, stage:'plan' as const, status:'failed' as const, input_sha256: sha(bytes), output_sha256: sha(reason), previous_receipt_sha256:null, next_stage:'attention_required' as const, prologue:{project_root:root,mission_sha256:sha(bytes),profile:'default' as const,semantic_revision:0}, external_actions:[{kind:'devspace' as const,status:'failed' as const}], recovery:{session_authority:'settled' as const,attempt:0,exact_slug:slug} };
+      await new StateStore(workflowPath).write({...wfBase,stage:'attention_required',session_authority:'settled',task_outcome:'NOT_EXECUTED',receipts:[receipt]}, { explicitSettle: true });
+      await stateStore.write(failed, { explicitSettle: true });
+      return {statePath,state:failed};
+    };
+    if (options.devspace) { const q=await options.devspace.qualify(root, options.manifestPath); if (!q.ok) return await preSubmitFailure(q.reason ?? 'QUALIFICATION_FAILED'); }
+    if (options.localGate) { const gate=await execa(options.localGate[0], options.localGate.slice(1),{cwd:root,shell:false,reject:false}); if (gate.exitCode!==0) return await preSubmitFailure('LOCAL_GATE_FAILED'); }
+    const args=[...command.slice(1), '--engine','browser','--slug',slug,'--prompt',bytes.toString('utf8'),'--write-output',outputPath,
+      ...(manifest?.model ? ['--model',manifest.model] : []), ...(manifest?.model_strategy ? ['--model-strategy',manifest.model_strategy] : []),
+      ...(manifest?.research ? ['--research',manifest.research] : []), ...(manifest?.archive ? ['--archive',manifest.archive] : []),
+      ...(manifest?.copy_profile ? ['--copy-profile',manifest.copy_profile] : []), ...(manifest?.attachments ?? []).flatMap((a:string)=>['--attachment',a]), ...(options.oracleArgs??[])];
     const child=execa(command[0],args,{cwd:root,shell:false,reject:false,env:{...process.env, ...(options.oracleHome?{ORACLE_HOME:options.oracleHome}:{})}});
     await stateStore.write({...initial, session_authority:'submitted_unknown', transport_status:'pending', process: child.pid ? { pid: child.pid, command: command[0], args } : undefined }, { explicitSettle: false });
     const registry = new ProcessRegistry(path.join(dir,'processes.json'));
