@@ -102,7 +102,7 @@ export async function stopRecorded(statePath:string): Promise<void> {
   if (records.length === 0 && state.process) {
     const p = state.process;
     if (!p.started_at || !p.cwd) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
-    const startedAt = p.started_at;
+    let startedAt = p.started_at;
     if (process.platform !== 'win32') {
       const probe = await execa('ps', ['-p', String(p.pid), '-o', 'lstart='], { reject: false });
       if (probe.exitCode !== 0 || !probe.stdout.trim()) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
