@@ -5,14 +5,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 const root=process.cwd(), temp=mkdtempSync(join(tmpdir(),'awgpt-package-e2e-')); let cli,server,bad;
-const npm=process.platform==='win32'?'npm.cmd':'npm';
+// Run npm's JS CLI with Node directly; npm.cmd can raise EINVAL on Windows.
+const npmExecPath=process.env.npm_execpath;
+if(!npmExecPath || !existsSync(npmExecPath)) throw Error(`npm_execpath is unavailable or invalid: ${npmExecPath??'<unset>'}`);
+const npmRun=(args,options)=>execFileSync(process.execPath,[npmExecPath,...args],options);
 const run=async (a,o={})=>{ try { const r=await promisify(execFile)(process.execPath,[cli,...a],{cwd:temp,encoding:'utf8',timeout:10000,...o}); return r.stdout; } catch (e) { e.stdout=e.stdout??''; e.stderr=e.stderr??''; throw e; } };
 const listen=s=>new Promise((resolve,reject)=>{s.once('error',reject); s.listen(0,'127.0.0.1',resolve);});
 const closeServer=s=>s?.listening?new Promise((resolve,reject)=>s.close(e=>e?reject(e):resolve())):Promise.resolve();
 try {
- const packed=execFileSync(npm,['pack','--json','--pack-destination',temp],{cwd:root,encoding:'utf8'}); const jsonStart=packed.lastIndexOf('\n['); const p=JSON.parse(jsonStart>=0?packed.slice(jsonStart+1):packed.slice(packed.indexOf('[')))[0];
+ const packed=npmRun(['pack','--json','--pack-destination',temp],{cwd:root,encoding:'utf8'}); const jsonStart=packed.lastIndexOf('\n['); const p=JSON.parse(jsonStart>=0?packed.slice(jsonStart+1):packed.slice(packed.indexOf('[')))[0];
  const packFiles=p.files??[]; const tarEntries=new Set(packFiles.map(f=>`package/${String(f.path??f).replaceAll('\\\\','/')}`)); const prefix=join(temp,'prefix');
- execFileSync(npm,['install','--prefix',prefix,'--ignore-scripts',join(temp,p.filename)],{cwd:root,stdio:'pipe'}); const installed=join(prefix,'node_modules','awgpt'); cli=join(installed,'dist','index.js');
+ npmRun(['install','--prefix',prefix,'--ignore-scripts',join(temp,p.filename)],{cwd:root,stdio:'pipe'}); const installed=join(prefix,'node_modules','awgpt'); cli=join(installed,'dist','index.js');
  if(!(await run(['install','--help'])).includes('--source')) throw Error('packaged help missing lifecycle options'); const runHelp=await run(['run','--help']); if(!runHelp.includes('--project-root')||!runHelp.includes('--oracle-arg')) throw Error('packaged run help missing options'); const recoverHelp=await run(['recover','--help']); if(!recoverHelp.includes('--state')||!recoverHelp.includes('--action')) throw Error('packaged recover help missing options');
  const manifest=JSON.parse(readFileSync(join(installed,'install-manifest.json'),'utf8')); const included=manifest.include??[]; if(included.length<10) throw Error('manifest unexpectedly small'); for(const item of included) { const normalized=item.replaceAll('\\\\','/'); const exact=`package/${normalized}`; const prefix=`package/${normalized.replace(/\/$/,'')}/`; const pattern=new RegExp(`^${(exact).replace(/[.+^${}()|[\]\\]/g,'\\$&').replaceAll('*','.*')}$`); if(!tarEntries.has(exact) && ![...tarEntries].some(entry=>entry.startsWith(prefix)||pattern.test(entry))) throw Error(`manifest entry missing from npm pack: ${item}`); } const skills=[...new Set(included.filter(x=>x.startsWith('skills/')).map(x=>x.split('/')[1]))]; if(skills.length!==6) throw Error('skill manifest mismatch');
  const home=join(temp,'home'), install=JSON.parse(await run(['install','--agent-home',home])); if(!install.ok||install.count<6) throw Error('packaged install failed'); const receipt=JSON.parse(readFileSync(install.receipt,'utf8')); if(realpathSync(receipt.source_root)!==realpathSync(installed)) throw Error('wrong source_root');
