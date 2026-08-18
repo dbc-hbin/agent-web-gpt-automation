@@ -692,6 +692,17 @@ async function assertSafeOutputPath(target, root) {
   const existing = await lstat(absolute).catch(() => void 0);
   if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error("RECOVERY_OUTPUT_INVALID");
 }
+async function captureRunDirectory(dir) {
+  const stat = await lstat(dir).catch(() => void 0);
+  if (!stat?.isDirectory() || stat.isSymbolicLink()) throw new Error("RECOVERY_RUN_DIRECTORY_INVALID");
+  return { dev: stat.dev, ino: stat.ino, real: await realpath(dir) };
+}
+async function assertRunDirectory(dir, expected) {
+  const stat = await lstat(dir).catch(() => void 0);
+  if (!stat?.isDirectory() || stat.isSymbolicLink() || stat.dev !== expected.dev || stat.ino !== expected.ino) throw new Error("RECOVERY_RUN_DIRECTORY_CHANGED");
+  if (await realpath(dir).catch(() => "") !== expected.real) throw new Error("RECOVERY_RUN_DIRECTORY_CHANGED");
+  await assertSafeOutputPath(path3.join(dir, "recovery-check.md"), dir);
+}
 function validateOracleCommand(command) {
   if (!command.length || command.some((part) => !part)) throw new Error("ORACLE_COMMAND_INVALID");
   const executable = path3.basename(command[0]).toLowerCase();
@@ -779,6 +790,7 @@ async function executeExactRecovery(plan) {
   } else throw new Error("RECOVERY_MISSION_INVALID");
   const runDir = path3.dirname(plan.output_path);
   await mkdir3(runDir, { recursive: true });
+  const runDirIdentity = await captureRunDirectory(runDir);
   await assertSafeOutputPath(plan.output_path, runDir);
   await assertSafeOutputPath(plan.authoritative_output_path, runDir);
   const preLockRaw = JSON.parse(await readFile4(plan.state_path, "utf8"));
@@ -811,10 +823,12 @@ async function executeExactRecovery(plan) {
       stdin: "ignore",
       env: { ...process.env }
     });
+    await assertRunDirectory(runDir, runDirIdentity);
     await Promise.all([
       writeFile(`${stdoutPath}.tmp`, result.stdout, "utf8").then(() => rename2(`${stdoutPath}.tmp`, stdoutPath)),
       writeFile(`${stderrPath}.tmp`, result.stderr, "utf8").then(() => rename2(`${stderrPath}.tmp`, stderrPath))
     ]);
+    await assertRunDirectory(runDir, runDirIdentity);
     const candidateStat = await lstat(plan.output_path).catch(() => void 0);
     if (candidateStat && (!candidateStat.isFile() || candidateStat.isSymbolicLink())) throw new Error("RECOVERY_OUTPUT_INVALID");
     const output = candidateStat ? await readFile4(plan.output_path) : Buffer.alloc(0);
@@ -866,10 +880,12 @@ async function executeExactRecovery(plan) {
         }
       }
       if (semanticOutput) {
+        await assertRunDirectory(runDir, runDirIdentity);
         const destinationStat = await lstat(plan.authoritative_output_path).catch(() => void 0);
         if (destinationStat && (!destinationStat.isFile() || destinationStat.isSymbolicLink())) throw new Error("RECOVERY_OUTPUT_INVALID");
         if (destinationStat) throw new Error("RECOVERY_OUTPUT_ALREADY_AUTHORITATIVE");
         await rename2(plan.output_path, plan.authoritative_output_path);
+        await assertRunDirectory(runDir, runDirIdentity);
         authority = "settled";
         status = ["EXECUTED", "legacy_unclassified"].includes(taskOutcome) ? "complete" : "attention_required";
         harvested = true;
@@ -2264,6 +2280,13 @@ async function assertSafeOutput(p, root) {
   const s = await lstat5(abs).catch(() => void 0);
   if (s && (!s.isFile() || s.isSymbolicLink())) throw new Error("OUTPUT_PATH_INVALID");
 }
+async function assertRunDirectory2(dir, expected) {
+  const stat = await lstat5(dir).catch(() => void 0);
+  if (!stat?.isDirectory() || stat.isSymbolicLink() || stat.dev !== expected.dev || stat.ino !== expected.ino) throw new Error("RUN_DIRECTORY_CHANGED");
+  const real = await realpath2(dir).catch(() => "");
+  if (real !== expected.real) throw new Error("RUN_DIRECTORY_CHANGED");
+  await assertSafeOutput(path9.join(dir, "output.md"), dir);
+}
 async function runOracle(options) {
   const root = await exactDir(options.projectRoot);
   const requestedMission = path9.resolve(options.missionPath);
@@ -2294,6 +2317,8 @@ async function runOracle(options) {
     if (e.code === "EEXIST") throw new Error("RUN_ID_COLLISION");
     throw e;
   });
+  const runDirStat = await lstat5(dir);
+  const runDirIdentity = { dev: runDirStat.dev, ino: runDirStat.ino, real: await realpath2(dir) };
   const statePath = path9.join(dir, "state.json");
   const workflowPath = path9.join(dir, "workflow.json");
   const stateStore = new StateStore(statePath);
@@ -2371,8 +2396,10 @@ ${versionCheck.stderr}`.trim();
     }
     const stdout = out.stdout ?? "";
     const stderr = out.stderr ?? "";
+    await assertRunDirectory2(dir, runDirIdentity);
     await writeFile2(path9.join(dir, "stdout.log"), stdout);
     await writeFile2(path9.join(dir, "stderr.log"), stderr);
+    await assertRunDirectory2(dir, runDirIdentity);
     const outputStat = await lstat5(outputPath).catch(() => void 0);
     if (outputStat && (!outputStat.isFile() || outputStat.isSymbolicLink())) throw new Error("OUTPUT_PATH_INVALID");
     const durable = outputStat ? await readFile9(outputPath) : Buffer.from("");
