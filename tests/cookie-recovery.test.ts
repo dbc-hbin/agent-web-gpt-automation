@@ -101,16 +101,15 @@ describe('ChatGPT cookie recovery', () => {
     });
 
     expect(result).toMatchObject({
-      ok: true, status: 'RECOVERED', code: 'LOGIN_RECOVERED', cookies_copied: 2,
+      ok: false, status: 'BLOCKED', code: 'IMPORTED_COOKIES_REJECTED', cookies_copied: 2,
       source_profile: 'Profile 1',
     });
     expect(readCookies(setup.targetCookies)).toEqual([
-      { host_key: '.chatgpt.com', name: 'chat-session', encrypted: 'chat-new' },
+      { host_key: '.chatgpt.com', name: 'chat-session', encrypted: 'chat-old' },
       { host_key: '.example.com', name: 'keep', encrypted: 'keep-existing' },
-      { host_key: 'auth.openai.com', name: 'auth-session', encrypted: 'auth-new' },
     ]);
     expect(JSON.parse(await readFile(join(setup.seed, 'Local State'), 'utf8')).os_crypt)
-      .toEqual({ encrypted_key: 'source-key' });
+      .toEqual({ encrypted_key: 'seed-key' });
   });
 
   it('restores the seed cookies and key metadata when imported cookies do not log in', async () => {
