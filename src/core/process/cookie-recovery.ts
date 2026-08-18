@@ -111,6 +111,21 @@ async function assertSeedClosed(seedPath: string): Promise<void> {
   }
 }
 
+// Chrome may keep SQLite/WAL files changing while either the user-data root or
+// profile is open.  Treat any of Chrome's quiescence markers as authoritative;
+// copying a live cookie database can otherwise produce a self-consistent but
+// unusable snapshot.
+async function assertQuiescent(directory: string): Promise<void> {
+  for (const name of ['SingletonLock', 'SingletonSocket', 'SingletonCookie', 'DevToolsActivePort']) {
+    try {
+      await lstat(path.join(directory, name));
+      throw new Error('CHROME_PROFILE_IN_USE');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+}
+
 function cookieColumns(db: DatabaseSync): string[] {
   return (db.prepare('PRAGMA table_info(cookies)').all() as unknown as ColumnInfo[])
     .map(column => column.name)
@@ -221,6 +236,8 @@ export async function recoverChatGptLogin(options: CookieRecoveryOptions): Promi
   if (seed === sourceRoot) throw new Error('COOKIE_RECOVERY_SOURCE_EQUALS_SEED');
 
   const sourceProfile = await discoverSourceProfile(sourceRoot, options.sourceProfile);
+  await assertQuiescent(sourceRoot);
+  await assertQuiescent(path.join(sourceRoot, sourceProfile));
   const sourceCookies = await findCookies(path.join(sourceRoot, sourceProfile));
   const targetCookies = await findCookies(path.join(seed, 'Default'));
   const sourceLocalState = path.join(sourceRoot, 'Local State');
@@ -284,7 +301,9 @@ export async function recoverChatGptLogin(options: CookieRecoveryOptions): Promi
     } finally {
       await manager.removeProfile(id);
     }
-    const loginRecovered = auth.backend_status === 200 && !auth.login_cta;
+    // `ok` is the single auth-preflight authority.  Requiring only a 200
+    // backend response would accept a partially rendered/logged-out session.
+    const loginRecovered = auth.ok;
     if (!loginRecovered) {
       await restoreCookieFiles(
         targetCookies, originalCookies, originalSidecars, originalLocalState, targetLocalState,
