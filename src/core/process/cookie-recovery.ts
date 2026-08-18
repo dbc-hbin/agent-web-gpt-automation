@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { backup, DatabaseSync } from 'node:sqlite';
 import {
   chmod, copyFile, lstat, mkdir, readFile, rename, rm,
@@ -26,6 +26,8 @@ export interface CookieRecoveryOptions {
   sourceProfile?: string;
   chromePath?: string;
   validateProfile?: (profilePath: string) => Promise<BrowserAuthPreflightResult>;
+  /** Test hook run after source metadata is read, before the final guard. */
+  beforeTargetMutation?: () => Promise<void> | void;
 }
 
 export interface CookieRecoveryResult {
@@ -124,6 +126,37 @@ async function assertQuiescent(directory: string): Promise<void> {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
   }
+}
+
+interface SourceFingerprint {
+  files: Array<{ path: string; size: number; mtimeMs: number; ino: number; hash: string }>;
+}
+
+async function fingerprintFile(file: string): Promise<SourceFingerprint['files'][number]> {
+  const metadata = await lstat(file);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error('CHROME_SOURCE_CHANGED');
+  const data = await readFile(file);
+  return {
+    path: file, size: metadata.size, mtimeMs: metadata.mtimeMs, ino: Number(metadata.ino),
+    hash: createHash('sha256').update(data).digest('hex'),
+  };
+}
+
+async function captureSourceFingerprint(sourceRoot: string, sourceCookies: string, sourceLocalState: string): Promise<SourceFingerprint> {
+  const files = [sourceCookies, sourceLocalState];
+  for (const suffix of ['-wal', '-shm']) {
+    try { await lstat(`${sourceCookies}${suffix}`); files.push(`${sourceCookies}${suffix}`); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  return { files: await Promise.all(files.map(fingerprintFile)) };
+}
+
+async function assertSourceUnchanged(root: string, fingerprint: SourceFingerprint, cookies: string, localState: string): Promise<void> {
+  await assertQuiescent(root);
+  await assertQuiescent(path.dirname(path.dirname(cookies)));
+  const current = await captureSourceFingerprint(root, cookies, localState);
+  if (JSON.stringify(current) !== JSON.stringify(fingerprint)) throw new Error('CHROME_SOURCE_CHANGED');
 }
 
 function cookieColumns(db: DatabaseSync): string[] {
@@ -246,6 +279,7 @@ export async function recoverChatGptLogin(options: CookieRecoveryOptions): Promi
     assertRegularFile(sourceLocalState, 'CHROME_LOCAL_STATE_INVALID'),
     assertRegularFile(targetLocalState, 'PROFILE_LOCAL_STATE_INVALID'),
   ]);
+  const sourceFingerprint = await captureSourceFingerprint(sourceRoot, sourceCookies, sourceLocalState);
 
   const work = path.join(path.dirname(seed), `.cookie-recovery-${randomUUID()}`);
   await mkdir(work, { recursive: false, mode: 0o700 });
@@ -284,6 +318,8 @@ export async function recoverChatGptLogin(options: CookieRecoveryOptions): Promi
     }
 
     const localState = await buildMergedCookieKey(sourceLocalState, targetLocalState);
+    await options.beforeTargetMutation?.();
+    await assertSourceUnchanged(sourceRoot, sourceFingerprint, sourceCookies, sourceLocalState);
     originalLocalState = localState.original;
     await writeFileAtomic(targetLocalState, localState.merged, { fsync: true, mode: 0o600 });
     replaced = true;

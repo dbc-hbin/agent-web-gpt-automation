@@ -182,4 +182,27 @@ describe('ChatGPT cookie recovery', () => {
     })).rejects.toThrow('PROFILE_SEED_IN_USE');
     expect(readCookies(setup.targetCookies)[0].encrypted).toBe('chat-old');
   });
+
+  it('fails closed when the source changes after snapshot, before seed mutation', async () => {
+    const setup = await fixture();
+    createCookies(setup.sourceCookies, [
+      { host: '.chatgpt.com', name: 'chat-session', encrypted: 'chat-new' },
+    ]);
+    createCookies(setup.targetCookies, [
+      { host: '.chatgpt.com', name: 'chat-session', encrypted: 'chat-old' },
+    ]);
+    const beforeState = await readFile(join(setup.seed, 'Local State'), 'utf8');
+
+    await expect(recoverChatGptLogin({
+      seedPath: setup.seed, sourceUserDataRoot: setup.source,
+      oracleHome: join(setup.root, 'oracle'),
+      beforeTargetMutation: async () => {
+        await writeFile(setup.sourceCookies, await readFile(setup.sourceCookies));
+        await writeFile(join(setup.source, 'Profile 1', 'SingletonLock'), 'active');
+      },
+      validateProfile: async () => { throw new Error('validator must not run'); },
+    })).rejects.toThrow('CHROME_PROFILE_IN_USE');
+    expect(readCookies(setup.targetCookies)[0].encrypted).toBe('chat-old');
+    expect(await readFile(join(setup.seed, 'Local State'), 'utf8')).toBe(beforeState);
+  });
 });

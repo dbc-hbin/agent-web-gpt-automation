@@ -1897,7 +1897,7 @@ async function findChrome() {
 }
 
 // src/core/process/cookie-recovery.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
+import { createHash as createHash5, randomUUID as randomUUID5 } from "node:crypto";
 import { backup, DatabaseSync } from "node:sqlite";
 import {
   chmod as chmod3,
@@ -1985,6 +1985,36 @@ async function assertQuiescent(directory) {
       if (error.code !== "ENOENT") throw error;
     }
   }
+}
+async function fingerprintFile(file) {
+  const metadata = await lstat4(file);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("CHROME_SOURCE_CHANGED");
+  const data = await readFile8(file);
+  return {
+    path: file,
+    size: metadata.size,
+    mtimeMs: metadata.mtimeMs,
+    ino: Number(metadata.ino),
+    hash: createHash5("sha256").update(data).digest("hex")
+  };
+}
+async function captureSourceFingerprint(sourceRoot, sourceCookies, sourceLocalState) {
+  const files = [sourceCookies, sourceLocalState];
+  for (const suffix of ["-wal", "-shm"]) {
+    try {
+      await lstat4(`${sourceCookies}${suffix}`);
+      files.push(`${sourceCookies}${suffix}`);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  return { files: await Promise.all(files.map(fingerprintFile)) };
+}
+async function assertSourceUnchanged(root, fingerprint, cookies, localState) {
+  await assertQuiescent(root);
+  await assertQuiescent(path8.dirname(path8.dirname(cookies)));
+  const current = await captureSourceFingerprint(root, cookies, localState);
+  if (JSON.stringify(current) !== JSON.stringify(fingerprint)) throw new Error("CHROME_SOURCE_CHANGED");
 }
 function cookieColumns(db) {
   return db.prepare("PRAGMA table_info(cookies)").all().map((column) => column.name).filter((name) => /^[a-z_][a-z0-9_]*$/i.test(name));
@@ -2085,6 +2115,7 @@ async function recoverChatGptLogin(options) {
     assertRegularFile(sourceLocalState, "CHROME_LOCAL_STATE_INVALID"),
     assertRegularFile(targetLocalState, "PROFILE_LOCAL_STATE_INVALID")
   ]);
+  const sourceFingerprint = await captureSourceFingerprint(sourceRoot, sourceCookies, sourceLocalState);
   const work = path8.join(path8.dirname(seed), `.cookie-recovery-${randomUUID5()}`);
   await mkdir7(work, { recursive: false, mode: 448 });
   const sourceSnapshot = path8.join(work, "source-cookies.sqlite");
@@ -2127,6 +2158,8 @@ async function recoverChatGptLogin(options) {
       };
     }
     const localState = await buildMergedCookieKey(sourceLocalState, targetLocalState);
+    await options.beforeTargetMutation?.();
+    await assertSourceUnchanged(sourceRoot, sourceFingerprint, sourceCookies, sourceLocalState);
     originalLocalState = localState.original;
     await writeFileAtomic6(targetLocalState, localState.merged, { fsync: true, mode: 384 });
     replaced = true;
@@ -2200,11 +2233,11 @@ import * as os4 from "node:os";
 import * as path12 from "node:path";
 
 // src/core/run/runtime.ts
-import { createHash as createHash5, randomUUID as randomUUID6 } from "node:crypto";
+import { createHash as createHash6, randomUUID as randomUUID6 } from "node:crypto";
 import { lstat as lstat5, mkdir as mkdir8, readFile as readFile9, writeFile as writeFile2, realpath as realpath2 } from "node:fs/promises";
 import * as path9 from "node:path";
 import { execa as execa4 } from "execa";
-var sha = (b) => createHash5("sha256").update(b).digest("hex");
+var sha = (b) => createHash6("sha256").update(b).digest("hex");
 async function exactDir(p) {
   const s = await lstat5(p).catch(() => void 0);
   if (!s?.isDirectory() || s.isSymbolicLink()) throw new Error("PROJECT_ROOT_INVALID");
@@ -2439,7 +2472,7 @@ async function stopRecorded(statePath) {
 }
 
 // src/core/forensics/no-submission.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 import { lstat as lstat6, readFile as readFile10, readdir as readdir4 } from "node:fs/promises";
 import * as path10 from "node:path";
 var PROMPT_NOT_OBSERVED = "Prompt did not appear in conversation before timeout (send may have failed)";
@@ -2447,7 +2480,7 @@ var NO_LIVE_TAB = "No live ChatGPT tab matched session";
 var NO_RECOVERABLE_URL = "session metadata has no recoverable ChatGPT conversation URL";
 var RECOVERY_STATE = /^\s*State:\s*[a-z][a-z0-9_-]*\s*$/im;
 function sha2562(bytes) {
-  return createHash6("sha256").update(bytes).digest("hex");
+  return createHash7("sha256").update(bytes).digest("hex");
 }
 async function exactRegularFile(candidate, expected) {
   if (path10.resolve(candidate) !== path10.resolve(expected)) return void 0;
@@ -2645,12 +2678,12 @@ function createHttpDevSpaceClient(endpoint, fetcher = fetch) {
 }
 
 // src/core/orchestrator/gate-runner.ts
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
 import * as path11 from "node:path";
 import { lstat as lstat7, realpath as realpath3 } from "node:fs/promises";
 import { execa as execa5 } from "execa";
 function sha2563(value) {
-  return createHash7("sha256").update(value, "utf8").digest("hex");
+  return createHash8("sha256").update(value, "utf8").digest("hex");
 }
 function environmentHash(env) {
   const canonical = Object.keys(env).sort().map((key) => `${key}=${env[key] ?? ""}`).join("\n");
