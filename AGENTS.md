@@ -1,48 +1,79 @@
-# Agent Web GPT Automation Repository Rules
+ # Agent Web GPT Automation Repository Rules
 
-## GPT Automation Change Persistence
+ ## Authority Order & Scope Discipline
 
-- Any durable change to GPT or ChatGPT skills, prompt or mode routing, recovery, state, locks, tabs, app registration, Web Multi-GPT, or their tests must include focused verification and a descriptive Git commit before the work is reported complete.
-- The installed files under `%USERPROFILE%\.codex` are deployment copies, not the sole source of truth. Synchronize reusable fixes back into this repository instead of leaving them only in the global installation.
-- Public-safe reusable changes must be committed to the clean public `main`, pushed, and checked in CI. Never copy credentials, host-only values, sensitive artifacts, or private Git history into this repository.
-- Never push a private-history development branch to the public repository. If commit, push, or CI verification is blocked, report the exact dirty files and blocker and do not claim completion.
+ 1. Current explicit user instruction and confirmed product intent.
+ 2. Accepted product requirements and repository governance rules.
+ 3. Live TypeScript code, contracts, and runtime behavior.
+ 4. Tests, plans, reviews, fixtures, and documentation.
+ - Make the smallest complete change that achieves the outcome. Do not silently broaden the task or build unrequested general-purpose infrastructure.
 
-## Filesystem hygiene
+ ## TypeScript 1.0.0 Single Runtime & Branch Policy
 
-- Never create test output, temporary directories, logs, downloaded archives, or dependency checkouts directly under a drive root such as `C:\` or `D:\`.
-- Use the operating-system temp directory under a task-specific `Codex` child first. When a shorter Windows path is genuinely required, use the authoritative repository's gitignored `.codex-tmp\<task>` directory.
-- Put reusable third-party source checkouts under `%LOCALAPPDATA%\Codex\Sources`, not a drive root. An explicitly user-approved project root is not temporary storage and must not be repurposed.
-- Before cleaning an existing drive-root item, classify its ownership and active references. Preserve user projects, system folders, credentials, and ambiguous items; move confirmed automation artifacts to a recoverable archive instead of deleting them.
+ - Active development on `main` is **Pure Node.js/TypeScript 1.0.0 (`awgpt`)**.
+ - Node.js LTS (`>=22.16.0`), npm, TypeScript 5.6, `tsup`, and Vitest constitute the official toolchain.
+ - Do not reintroduce Python or PowerShell runtime files, scripts, or tests into `main`. Any legacy Python maintenance belongs exclusively on the `python` branch.
+ - Keep wire contracts in `contracts/` and runtime schemas validated with Zod.
 
-## Comprehensive-mode ownership
+ ## GPT Automation Change Persistence & Verification Gates
 
-- Active development on `main` uses the Node.js/TypeScript lifecycle. Python
-  implementation changes belong only on the `python` branch; do not reintroduce
-  Python runtime files, tests, or installers into `main`.
-- The 4,800-second mark is only a caution/status-audit threshold. At that
-  threshold inspect the exact run's process liveness, output/log progress,
-  known conversation binding, and terminal evidence, then continue the same
-  process or exact-slug live recovery while it remains live or uncertain.
-  Elapsed time alone never stops work, releases ownership, marks failure, or
-  authorizes a replacement submission. Only a real provider hard limit,
-  explicit terminal evidence, user stop, or verified inability may end an
-  observation path; prompt-not-observed and no-duplicate rules remain strict.
-- Do not blanket-fan-out Codex native subagents. Normal operation starts with
-  at most two concurrent workers and the global hard cap is three spawned
-  threads. Concurrent writers require explicit, non-overlapping file lists or
-  distinct worktrees. Oracle Web Multi remains separately bounded to five
-  provider sessions, and local-subagent and Oracle-web phases do not overlap.
+ - Any durable change to GPT/ChatGPT skills, CLI commands, routing, recovery, state stores, locks, DevSpace adapters, or their tests must pass verification before reporting complete:
+   - `npm run typecheck` (`tsc --noEmit`)
+   - `npm run test:run` (Vitest unit & contract suites)
+   - `npm run package:e2e` (Package build, installation, mock MCP & Oracle recovery E2E)
+   - `npm run build` (`tsup` ESM bundle)
+   - `npm run pack:check` (`npm pack --dry-run` tarball validation)
+ - Files installed under `%USERPROFILE%\.codex` or `~/.codex` are deployment copies managed by receipts, not the primary source of truth. Synchronize reusable improvements back into this repository.
+ - Changes committed to `main` must be public-safe, clean, and checked. Never commit secrets, tokens, credentials, machine-local browser profiles, or private history.
 
-- Every new ChatGPT submission uses Oracle. Regular web work defaults to `GPT-5.6` at the highest supported non-Pro reasoning tier (`extra-high`). Pro is quota-limited and must never be selected or upgraded automatically: only an explicit user Pro request may select `GPT-5.6 Sol` at the Pro effort. Qualified Pro uses the same DevSpace app with mission-scoped read/write/command authority inside the exact root; explicit `pro-attachment` is reserved for immutable or external evidence that DevSpace cannot read and is never an automatic fallback.
-- New GPT comprehensive workflows use `codex.chatgpt.oracle-comprehensive/v1`. - The completing web GPT stage authors the next stage's semantic prompt. Local Codex may validate UTF-8, hashes, stage identity, immutable bindings, transport, recovery, and deterministic final tests, but must not rewrite the next prompt or take over expensive exploration/implementation.
-- A selected Web Multi advisory uses genuine independent Oracle sessions. Provider generation is limited to at most five concurrent children; larger accepted topologies run in capacity waves without reducing their logical lane count.
-- Comprehensive review owns plan repair and finalization. It fixes every locally resolvable defect inline, writes the corrected final plan and implementation mission, then returns PASS or PASS_WITH_NOTES. New work never loops review back to plan; legacy REVISE is terminal compatibility only, and FAIL requires a concrete external blocker.
-- Every regular Oracle stage is bound to one exact project root and one exact mission path. DevSpace may retry that same root once after listing registered workspaces, but must never substitute a parent, child, similarly named, active workspace, or shell boundary workaround.
-- A Pro DevSpace stage has the same exact-root binding. It may broadly inspect decision-relevant material and perform mission-authorized file edits and commands inside that root, subject to the repository `AGENTS.md` chain and normal safety rules. It must not alter accounts, app settings, or external state unless the mission explicitly authorizes that action. Once the one-time DevSpace qualification is complete, do not re-check app/settings state per run.
-- Before the first DevSpace-backed Oracle submission for a new exact project root, verify exact equality against the current local DevSpace `allowedRoots`. Cache that qualification against the config hash; revalidate only when the config changes. Missing, parent, child, or similarly named roots fail before Oracle/browser creation. This lightweight root guard must not automate or repeatedly inspect ChatGPT app/settings state.
-- Pro DevSpace completion requires a v1 `TASK_OUTCOME` marker as the final nonempty line, with citations and reference definitions before it. A bounded provider-rendering exception may accept exactly one marker followed only by single-line HTTP(S) Markdown reference definitions; ordinary prose or another marker remains unknown. Exit zero plus a durable answer is not successful execution when the session exposed no callable DevSpace tools or could not read the exact mission/root. A durably terminal `NOT_EXECUTED` run may release the project lock for one fresh retry with identical mission bytes and SHA-256; a repeated tool-exposure failure is `attention_required`, with no automatic app-settings manipulation or attachment fallback.
-- Transport and runner recovery retain the exact workflow/stage identity. They must not create a replacement workflow or reset the semantic revision budget.
-- Every new Oracle run must use a throwaway copy of the manually signed-in profile and an Oracle-owned hidden window. Never share the manual-login Chrome process across concurrent projects.
-- Exact-slug recovery may relaunch a bounded recovery browser from the persisted profile seed and open only the recorded conversation URL. It must never restart, resubmit, or create a replacement conversation.
-- A nonzero Oracle exit after submission, including a browser response timeout, is attention-required rather than web-terminal failure. It retains exact-session ownership and allows only exact-slug live/harvest recovery.
-- Exact session authority is monotonic. `terminal_observed` cannot regress to `live`; observer disagreement remains attention-required under the same project lock until a later exact terminal harvest produces fresh nonempty durable output.
+ ## Filesystem & Path Hygiene
+
+ - Never create test output, temporary directories, logs, downloaded archives, or dependency checkouts directly under a drive root such as `C:\` or `/`.
+ - Use the operating system's temp directory under a task-specific prefix (e.g., `join(tmpdir(), 'awgpt-...')`). When a project-contained scratch path is genuinely required, use the gitignored `.awgpt` or `.codex-tmp` directory.
+ - Put reusable third-party source checkouts under `%LOCALAPPDATA%\Codex\Sources` or designated user paths, never on drive roots.
+ - Before cleaning any directory, classify ownership and active references. Preserve user projects, system folders, credentials, and ambiguous items; use safe/recoverable operations over raw deletion.
+
+ ## DevSpace & Exact-Root Qualification
+
+ - Every DevSpace-backed session is bound to one exact project root.
+ - Before the first DevSpace-backed Oracle submission for a project, verify exact equality against the current local DevSpace `allowedRoots`.
+ - Never substitute a parent directory, child directory, similarly named folder, or active workspace workaround.
+ - DevSpace connection failure before launch fails closed: do not launch Oracle or create orphan submission records if exact root qualification fails.
+ - Do not mutate or automate ChatGPT UI settings, app creation/deletion, or app permissions per run.
+
+ ## Oracle & Browser Profile Isolation
+
+ - Every Oracle run must use a throwaway copy of the manual-login profile seed (`ProfileManager`) in an isolated hidden browser instance.
+ - Never share an active manual-login Chrome profile across concurrent tasks or processes.
+ - Reject symlinks, non-directory destinations, and path traversal during profile cloning and recovery auxiliary writes.
+ - When running `awgpt auth-recover`, the host Google Chrome must be completely closed to avoid SQLite file lock conflicts on the source Cookies database.
+
+ ## Monotonic Session Authority & Recovery
+
+ - Session authority transitions are strictly monotonic:
+   ```text
+   pre_submit ─┬→ submitted_unknown ─→ terminal_observed ─→ settled
+               ├→ live ──────────────→ terminal_observed ─→ settled
+               ├→ terminal_observed
+               └→ settled
+   ```
+ - `terminal_observed` cannot regress to `live`.
+ - `submitted_unknown` is never treated as non-submission; automatic duplicate submission or replacement workflows are prohibited.
+ - Recovery must always reuse the recorded exact Oracle slug via `awgpt recover --state <path> --action live|harvest`. Never pass replacement prompts or restart flags.
+ - The 4,800-second mark is only a status-audit threshold, not a timeout or kill trigger. Elapsed time alone never releases ownership, marks failure, or authorizes replacement.
+ - Output contract for regular direct/orchestrator runs requires a nonempty output file and exactly one `TASK_OUTCOME: EXECUTED|NOT_EXECUTED|BLOCKED` marker.
+ - Disagreement between observers remains `attention_required` under the same project lock.
+
+ ## Web Routing & Model Policy
+
+ - **Default Web Work**: Regular web tasks default to `GPT-5.6` with reasoning tier `extra-high` (highest non-Pro tier). Do not downgrade or silently upgrade to Pro.
+ - **Pro Model Guard**: Pro is quota-limited and strictly explicit-only. Only an explicit user request activates `GPT-5.6 Sol` at Pro effort with mission-scoped read/write DevSpace authority.
+ - **Ultra Economy Mode**: Local commander runs on `gpt-5.6-luna` with `max` reasoning effort, while heavy planning, implementation, and review are delegated to separate web sessions.
+ - **Composer Payload**: Regular web composer contains only `@DevSpace` plus the absolute UTF-8 mission path.
+
+ ## Subagent Concurrency & Delegation
+
+ - Do not blanket-fan-out native subagents. Normal operation starts with at most two concurrent workers with a global hard cap of three spawned threads.
+ - Concurrent writers require explicit, non-overlapping file lists or distinct worktrees.
+ - Local subagent execution and Oracle web phases do not overlap.
+ - Default delegated subagents inherit `gpt-5.6-luna` at `max` reasoning effort unless explicitly overridden.
