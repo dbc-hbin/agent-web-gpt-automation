@@ -41,7 +41,7 @@ to `127.0.0.1:7676`. During `devspace init`, enter only the listed roots and
 the public origin `https://<hostname>` (without `/mcp`).
 
 Before starting or restarting DevSpace 1.0.4, run the installed
-`bin/chatgpt_devspace_compat`. It hash-validates the exact upstream
+The compatibility preflight run by `awgpt doctor` hash-validates the exact upstream
 `dist/workspaces.js`, backs it up, and applies bounded concurrent discovery
 that skips transient `test-*` and cache trees. If it reports
 `service_restart_required=true`, restart DevSpace before any Oracle
@@ -114,6 +114,15 @@ This is read-only and checks only local DevSpace, then Funnel status, then the p
 awgpt doctor --project-root C:\projects\one
 ```
 
-If the endpoint is healthy but a ChatGPT call still fails, preserve the exact
-run state and use `awgpt recover --state <path> --action harvest`; never create
-a replacement submission automatically.
+If the public endpoint is healthy but a ChatGPT call still fails immediately
+after a manual registration or reconnect, run `post-register` once and repeat
+only the regular read-only Oracle probe. If that still fails, report the same
+registration URL and stop. Do not re-register the app automatically or loop
+the refresh.
+
+For an explicitly requested service/Funnel repair, use the idempotent `ensure`
+command after DevSpace starts:
+
+```powershell
+awgpt doctor --project-root C:\projects\one --recover
+```

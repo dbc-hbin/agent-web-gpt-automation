@@ -8,6 +8,7 @@
     "skills/chatgpt-oracle-runtime/SKILL.md",
     "skills/chatgpt-question-designer/SKILL.md",
     "skills/chatgpt-workspace-setup/SKILL.md",
+    "skills/chatgpt-workspace-setup/agents/openai.yaml",
     "skills/mcp-update-guard/SKILL.md",
     "skills/ultra-economy-mode/SKILL.md",
     "skills/web-multi-gpt/SKILL.md",

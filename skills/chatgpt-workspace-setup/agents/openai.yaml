@@ -1,0 +1,6 @@
+interface:
+  display_name: "ChatGPT Workspace Setup"
+  short_description: "Set up or diagnose the managed DevSpace workspace"
+  default_prompt: "$chatgpt-workspace-setup"
+policy:
+  allow_implicit_invocation: false
