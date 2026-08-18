@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {
   qualifyExactProjectRoot
-} from "./chunk-GXIWVMVH.js";
+} from "./chunk-FOSMXQO6.js";
 
 // src/cli/index.ts
 import { Command } from "commander";
@@ -2106,7 +2106,7 @@ async function runOracle(options) {
       }
     }
     if (out.exitCode === 0) await writeFile2(path9.join(dir, "output.md"), stdout);
-    retainLock = authority === "submitted_unknown" || authority === "live";
+    retainLock = true;
     const state = { ...initial, session_authority: authority, transport_status: out.exitCode === 0 ? "complete" : "failed", task_outcome: outcome, artifacts: { output: path9.join(dir, "output.md"), transcript: path9.join(dir, "transcript.md"), stdout: path9.join(dir, "stdout.log"), stderr: path9.join(dir, "stderr.log"), browser_temp: dir } };
     await stateStore.write(state);
     return { statePath, state };
@@ -2368,7 +2368,7 @@ function createCLI() {
     try {
       const client = createHttpDevSpaceClient(options.devspaceUrl);
       const devspace = { qualify: async (root) => {
-        const { qualifyExactProjectRoot: qualifyExactProjectRoot2 } = await import("./qualification-L3L7BCA4.js");
+        const { qualifyExactProjectRoot: qualifyExactProjectRoot2 } = await import("./qualification-PPG2UOJ3.js");
         const result = await qualifyExactProjectRoot2(root, client);
         return { ok: result.ok, reason: result.code };
       } };

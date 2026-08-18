@@ -37,7 +37,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
     let outcome:'EXECUTED'|'NOT_EXECUTED'|'BLOCKED'|'pending'='pending'; let authority: SessionAuthority=out.exitCode===0?'terminal_observed':'submitted_unknown';
     if (out.exitCode===0) { try { outcome=parseTaskOutcome(stdout).outcome; } catch { authority='submitted_unknown'; } }
     if (out.exitCode===0) await writeFile(path.join(dir,'output.md'), stdout);
-    retainLock = (authority as SessionAuthority) === 'submitted_unknown' || (authority as SessionAuthority) === 'live';
+    retainLock = true;
     const state: OracleRunState={...initial,session_authority:authority,transport_status:out.exitCode===0?'complete':'failed',task_outcome:outcome,artifacts:{output:path.join(dir,'output.md'),transcript:path.join(dir,'transcript.md'),stdout:path.join(dir,'stdout.log'),stderr:path.join(dir,'stderr.log'),browser_temp:dir}};
     await stateStore.write(state); return {statePath,state};
   } finally { if (!retainLock) await release(); }

@@ -29,7 +29,7 @@ export async function qualifyExactProjectRoot(
   try { opened = await client.open_workspace({ root }); }
   catch (error) { return { ok: false, code: 'DEVSPACE_OPEN_WORKSPACE_FAILED', projectRoot: root, detail: String(error) }; }
   const allowedRoots = rootsFrom(opened);
-  if (allowedRoots.length !== 1 || allowedRoots[0] !== root) {
+  if (!allowedRoots.includes(root)) {
     return { ok: false, code: 'DEVSPACE_EXACT_ROOT_MISMATCH', projectRoot: root, allowedRoots };
   }
   try {

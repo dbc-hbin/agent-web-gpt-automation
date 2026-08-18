@@ -15,7 +15,7 @@ async function qualifyExactProjectRoot(projectRoot, client) {
     return { ok: false, code: "DEVSPACE_OPEN_WORKSPACE_FAILED", projectRoot: root, detail: String(error) };
   }
   const allowedRoots = rootsFrom(opened);
-  if (allowedRoots.length !== 1 || allowedRoots[0] !== root) {
+  if (!allowedRoots.includes(root)) {
     return { ok: false, code: "DEVSPACE_EXACT_ROOT_MISMATCH", projectRoot: root, allowedRoots };
   }
   try {
@@ -29,4 +29,4 @@ async function qualifyExactProjectRoot(projectRoot, client) {
 export {
   qualifyExactProjectRoot
 };
-//# sourceMappingURL=chunk-GXIWVMVH.js.map
+//# sourceMappingURL=chunk-FOSMXQO6.js.map
