@@ -95,7 +95,7 @@ fails, releases, or replaces a run because that threshold elapsed.
 Recovery always reuses the stored Oracle slug and never restarts or submits:
 
 ```powershell
-awgpt recover --run-dir C:\absolute\run --action harvest
+awgpt recover --state C:\absolute\run\state.json --action harvest
 ```
 
 Use `--action live` only to keep following the same stored session. A successful recovery must write a nonempty stored `output.md`, update `state.json` to `complete`, and refresh `transcript.md`; exit code zero without output is `attention_required`.
