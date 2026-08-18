@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const WorkflowState = z.enum(['plan', 'review', 'web-multi', 'pro', 'implementation', 'final-web-gate', 'complete', 'attention_required']);
+export const WorkflowState = z.enum(['plan', 'review', 'web-multi', 'pro', 'implementation', 'final-web-gate', 'recovery', 'complete', 'attention_required']);
 export type WorkflowState = z.infer<typeof WorkflowState>;
 
 export const Transition = z.object({
@@ -20,6 +20,8 @@ export const workflowTransitions: Transition[] = [
   { from: 'implementation', to: 'final-web-gate' },
   { from: 'final-web-gate', to: 'complete' },
   { from: 'final-web-gate', to: 'implementation' },
+  { from: 'recovery', to: 'complete' },
+  { from: 'recovery', to: 'attention_required' },
 ];
 export const validTransitions = workflowTransitions.map(t => `${t.from}->${t.to}`);
 

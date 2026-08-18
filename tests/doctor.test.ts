@@ -1,4 +1,5 @@
 import { afterEach, describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
 import { createServer, Server } from 'node:http';
 import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -143,6 +144,9 @@ describe('doctor contract', () => {
     const run = join(home, 'run');
     await mkdir(project);
     await mkdir(run);
+    const missionPath = join(project, 'mission.md');
+    const missionBytes = Buffer.from('exact recovery mission\n');
+    await writeFile(missionPath, missionBytes);
     const body = [
       "import { writeFileSync } from 'node:fs';",
       "const at = process.argv.indexOf('--write-output');",
@@ -166,7 +170,7 @@ describe('doctor contract', () => {
       schema: 'codex.chatgpt.oracle-run-state/v1', run_id: 'exact-run', project_root: project,
       mode: 'browser', session_authority: 'live', transport_status: 'pending', task_outcome: 'pending',
       task_outcome_contract: 'v1', transport: 'devspace',
-      mission: { path: join(project, 'mission.md'), sha256: 'a'.repeat(64) },
+      mission: { path: missionPath, sha256: createHash('sha256').update(missionBytes).digest('hex') },
       oracle: {
         resolved_version: 'fixture', session_locator: 'oracle-exact', slug: 'oracle-exact',
         command: [oracleCommand],
@@ -180,7 +184,7 @@ describe('doctor contract', () => {
     expect(report.recovery_action).toMatchObject({ kind: 'exact_session_recovery', status: 'COMPLETED' });
     expect(report.recovery_action?.detail).toContain('oracle-exact');
     expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
-      session_authority: 'terminal_observed', terminal_harvested: true,
+      session_authority: 'settled', terminal_harvested: true,
       transport_status: 'complete', task_outcome: 'EXECUTED',
     });
     const reacquired = await new LockManager({ projectRoot: project, retries: 0 }).tryAcquire();

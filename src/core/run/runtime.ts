@@ -43,8 +43,8 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   const outputPath = path.join(dir,'output.md');
   if (manifest?.copy_profile) { const s=await lstat(manifest.copy_profile).catch(()=>undefined); if (!s || s.isSymbolicLink() || !s.isDirectory()) throw new Error('COPY_PROFILE_INVALID'); }
   if (manifest?.attachments) for (const attachment of manifest.attachments) { const s=await lstat(attachment).catch(()=>undefined); if (!s || s.isSymbolicLink() || !s.isFile()) throw new Error('ATTACHMENT_INVALID'); }
-  if (options.dryRun) return { statePath, state: initial };
   const initial: OracleRunState = { schema:'codex.chatgpt.oracle-run-state/v1', run_id:runId, project_root:root, mission_path:mission, mission_sha256:sha(bytes), mission:{path:mission,sha256:sha(bytes)}, mode:'browser', session_authority:'pre_submit', transport_status:'pending', task_outcome:'pending', oracle:{resolved_version:'0.17.1',session_locator:slug,slug,command} };
+  if (options.dryRun) return { statePath, state: initial };
   const lock = new LockManager({ projectRoot: root }); const release = await lock.acquire();
   let retainLock = false;
   try {
@@ -53,7 +53,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
     await new StateStore(workflowPath).write(wfBase);
     const preSubmitFailure = async (reason: string) => {
       const failed={...initial,session_authority:'settled' as SessionAuthority,transport_status:'failed' as const,task_outcome:'NOT_EXECUTED' as const};
-      const receipt = { receipt_id: randomUUID(), run_id: runId, stage:'plan' as const, status:'failed' as const, input_sha256: sha(bytes), output_sha256: sha(reason), previous_receipt_sha256:null, next_stage:'attention_required' as const, prologue:{project_root:root,mission_sha256:sha(bytes),profile:'default' as const,semantic_revision:0}, external_actions:[{kind:'devspace' as const,status:'failed' as const}], recovery:{session_authority:'settled' as const,attempt:0,exact_slug:slug} };
+      const receipt = { receipt_id: randomUUID(), run_id: runId, stage:'plan' as const, status:'failed' as const, input_sha256: sha(bytes), output_sha256: sha(reason), previous_receipt_sha256:null, next_stage:'attention_required' as const, prologue:{project_root:root,mission_sha256:sha(bytes),profile:'default' as const,semantic_revision:0}, external_actions:[{kind:(reason === 'LOCAL_GATE_FAILED' ? 'local_gate' : 'devspace') as 'local_gate'|'devspace',status:'failed' as const}], recovery:{session_authority:'settled' as const,attempt:0,exact_slug:slug} };
       await new StateStore(workflowPath).write({...wfBase,stage:'attention_required',session_authority:'settled',task_outcome:'NOT_EXECUTED',receipts:[receipt]}, { explicitSettle: true });
       await stateStore.write(failed, { explicitSettle: true });
       return {statePath,state:failed};
@@ -118,4 +118,20 @@ export async function stopRecorded(statePath:string): Promise<void> {
   await terminatePersistedProcess(record);
   const settled = { ...state, session_authority: 'settled' as const, transport_status: 'failed' as const };
   await new StateStore(path.resolve(statePath)).write(settled, { explicitSettle: true });
+  const workflowPath = path.join(path.dirname(path.resolve(statePath)), 'workflow.json');
+  try {
+    const workflow = await new StateStore(workflowPath).read() as WorkflowRunState;
+    const previous = workflow.receipts.at(-1);
+    if (previous) {
+      const receipt = { receipt_id: randomUUID(), run_id: workflow.run_id, stage:'recovery' as const, status:'failed' as const,
+        input_sha256: previous.output_sha256, output_sha256: sha('STOP_REQUESTED'), previous_receipt_sha256: receiptSha256(previous),
+        next_stage:'attention_required' as const, prologue:{...previous.prologue, semantic_revision: workflow.revision + 1},
+        external_actions:[{kind:'process' as const,status:'audited' as const}], recovery:{session_authority:'settled' as const,attempt:previous.recovery.attempt + 1,exact_slug: state.oracle?.slug} };
+      await new StateStore(workflowPath).write({...workflow,stage:'attention_required',session_authority:'settled',task_outcome:'NOT_EXECUTED',revision:workflow.revision + 1,receipts:[...workflow.receipts, receipt]}, { explicitSettle: true });
+    }
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  const lockManager = new LockManager({ projectRoot: state.project_root });
+  if (await lstat(`${lockManager.getLockPath()}.owner.json`).catch(() => undefined)) {
+    await lockManager.reclaimAbandoned('settled');
+  }
 }

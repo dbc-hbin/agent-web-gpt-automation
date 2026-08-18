@@ -1,9 +1,11 @@
 import { execa } from 'execa';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, rename, rm, writeFile, realpath } from 'node:fs/promises';
 import * as path from 'node:path';
 import writeFileAtomic from 'write-file-atomic';
-import { OracleSessionStateSchema, parseTaskOutcome } from '../../types/index.js';
+import { OracleSessionStateSchema, parseTaskOutcome, WorkflowRunStateSchema, receiptSha256, type WorkflowReceipt } from '../../types/index.js';
+import { LockManager } from '../state/locks.js';
+import { StateStore } from '../state/store.js';
 
 export type RecoveryAction = 'live' | 'harvest';
 
@@ -159,8 +161,9 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
     if (semanticOutput) {
       const destinationStat = await lstat(plan.authoritative_output_path).catch(() => undefined);
       if (destinationStat?.isSymbolicLink()) throw new Error('RECOVERY_OUTPUT_SYMLINK_FORBIDDEN');
+      if (destinationStat) throw new Error('RECOVERY_OUTPUT_ALREADY_AUTHORITATIVE');
       await rename(plan.output_path, plan.authoritative_output_path);
-      authority = 'terminal_observed';
+      authority = 'settled';
       status = ['EXECUTED', 'legacy_unclassified'].includes(taskOutcome) ? 'complete' : 'attention_required';
       harvested = true;
     } else {
@@ -185,6 +188,31 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
   };
   OracleSessionStateSchema.parse(updated);
   await writeFileAtomic(plan.state_path, `${JSON.stringify(updated, null, 2)}\n`, { fsync: true });
+  if (harvested) {
+    const workflowPath = path.join(path.dirname(plan.state_path), 'workflow.json');
+    const workflowRaw = await readFile(workflowPath, 'utf8').catch(() => undefined);
+    if (!workflowRaw) {
+      return {
+        exit_code: result.exitCode ?? 1, stdout_path: stdoutPath, stderr_path: stderrPath,
+        output_nonempty: harvested, status, session_authority: authority,
+      };
+    }
+    const workflow = WorkflowRunStateSchema.parse(JSON.parse(workflowRaw));
+    const previous = workflow.receipts.at(-1);
+    if (!previous) throw new Error('RECOVERY_WORKFLOW_MISSING_RECEIPT');
+    const artifactHash = String(updated.artifact_sha256);
+    const receipt: WorkflowReceipt = {
+      receipt_id: randomUUID(), run_id: workflow.run_id, stage: 'recovery', status: 'completed',
+      input_sha256: previous.output_sha256, output_sha256: artifactHash,
+      previous_receipt_sha256: receiptSha256(previous), next_stage: status === 'complete' ? 'complete' : 'attention_required',
+      prologue: { ...previous.prologue }, external_actions: [{ kind: 'oracle', status: 'completed' }],
+      recovery: { session_authority: 'settled', attempt: previous.recovery.attempt + 1, exact_slug: plan.locator },
+    };
+    const next = { ...workflow, stage: receipt.next_stage, session_authority: 'settled' as const,
+      task_outcome: taskOutcome as any, revision: workflow.revision + 1, receipts: [...workflow.receipts, receipt] };
+    await new StateStore(workflowPath).write(next, { explicitSettle: true });
+    await new LockManager({ projectRoot: plan.project_root }).reclaimAbandoned('settled');
+  }
   return {
     exit_code: result.exitCode ?? 1,
     stdout_path: stdoutPath,

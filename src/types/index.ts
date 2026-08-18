@@ -42,7 +42,7 @@ export function parseTaskOutcome(output: string): ParsedTaskOutcome {
 }
 
 export const WorkflowStage = z.enum([
-  'plan', 'review', 'web-multi', 'pro', 'implementation', 'final-web-gate', 'complete', 'attention_required'
+  'plan', 'review', 'web-multi', 'pro', 'implementation', 'final-web-gate', 'recovery', 'complete', 'attention_required'
 ]);
 export type WorkflowStage = z.infer<typeof WorkflowStage>;
 

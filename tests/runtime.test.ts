@@ -15,7 +15,7 @@ describe('TypeScript runtime',()=>{
    const f=await fixture(''); const child=spawn(process.execPath,['-e','setTimeout(()=>{},60000)'],{cwd:f.root,detached:true,stdio:'ignore'});
    await mkdir(join(f.root,'.awgpt','run-fallback'),{recursive:true});
    const statePath=join(f.root,'.awgpt','run-fallback','state.json');
-   await writeFile(statePath,JSON.stringify({schema:'codex.chatgpt.oracle-run-state/v1',run_id:'run-fallback',project_root:f.root,mission_path:f.mission,mission_sha256:'a'.repeat(64),mode:'browser',session_authority:'submitted_unknown',transport_status:'pending',task_outcome:'pending',oracle:{resolved_version:'0.17.1',session_locator:'slug',slug:'slug',command:[process.execPath]},process:{pid:child.pid,command:process.execPath,args:['-e','setTimeout(()=>{},60000)']}}));
+   await writeFile(statePath,JSON.stringify({schema:'codex.chatgpt.oracle-run-state/v1',run_id:'run-fallback',project_root:f.root,mission_path:f.mission,mission_sha256:'a'.repeat(64),mode:'browser',session_authority:'submitted_unknown',transport_status:'pending',task_outcome:'pending',oracle:{resolved_version:'0.17.1',session_locator:'slug',slug:'slug',command:[process.execPath]},process:{pid:child.pid,command:process.execPath,args:['-e','setTimeout(()=>{},60000)'],cwd:f.root,started_at:new Date().toISOString()}}));
    await stopRecorded(statePath); expect((await loadRunState(statePath)).session_authority).toBe('settled');
  });
 });
