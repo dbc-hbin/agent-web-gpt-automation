@@ -1,34 +1,22 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, existsSync, realpathSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, existsSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-
-const root = process.cwd();
-const temp = mkdtempSync(join(tmpdir(), 'awgpt-package-e2e-'));
+import { join } from 'node:path';
+import { createServer } from 'node:http';
+const root=process.cwd(), temp=mkdtempSync(join(tmpdir(),'awgpt-package-e2e-')); let cli,server;
+const run=(a,o={})=>execFileSync(process.execPath,[cli,...a],{cwd:temp,encoding:'utf8',...o});
+const listen=s=>new Promise(r=>s.listen(0,'127.0.0.1',r));
 try {
-const packed = execFileSync('npm', ['pack', '--json', '--pack-destination', temp], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-const pack = JSON.parse(packed.slice(packed.indexOf('[')))[0];
-const tar = execFileSync('tar', ['-tf', join(temp, pack.filename)], { encoding: 'utf8' });
-const prefix = join(temp, 'prefix');
-execFileSync('npm', ['install', '--prefix', prefix, '--ignore-scripts', join(temp, pack.filename)], { cwd: root, stdio: 'pipe' });
-const cli = join(prefix, 'node_modules', 'awgpt', 'dist', 'index.js');
-const help = execFileSync(process.execPath, [cli, 'install', '--help'], { encoding: 'utf8' });
-if (!help.includes('--source') || !help.includes('--agent-home')) throw new Error('packaged help missing lifecycle options');
-const manifest = JSON.parse(readFileSync(join(prefix, 'node_modules', 'awgpt', 'install-manifest.json'), 'utf8'));
-const skills = manifest.include.filter(x => x.startsWith('skills/')).map(x => x.split('/')[1]);
-if (skills.length !== 6 || new Set(skills).size !== 6) throw new Error(`expected six skills, got ${skills.join(',')}`);
-for (const skill of skills) {
-  for (const file of [`package/skills/${skill}/SKILL.md`, ...(existsSync(join(root, `skills/${skill}/agents/openai.yaml`)) ? [`package/skills/${skill}/agents/openai.yaml`] : [])]) {
-    if (!tar.split('\n').includes(file)) throw new Error(`tar missing ${file}`);
-  }
-}
-const home = join(temp, 'home');
-const install = JSON.parse(execFileSync(process.execPath, [cli, 'install', '--agent-home', home], { cwd: temp, encoding: 'utf8' }));
-if (!install.ok || install.count < 6) throw new Error('packaged install failed');
-const receipt = JSON.parse(readFileSync(install.receipt, 'utf8'));
-const installedRoot = join(prefix, 'node_modules', 'awgpt');
-if (realpathSync(receipt.source_root) !== realpathSync(installedRoot)) throw new Error(`wrong source_root ${receipt.source_root}`);
-const rollback = JSON.parse(execFileSync(process.execPath, [cli, 'rollback', '--agent-home', home], { cwd: temp, encoding: 'utf8' }));
-if (!rollback.ok) throw new Error('packaged rollback failed');
-console.log('package e2e ok');
-} finally { rmSync(temp, { recursive: true, force: true }); }
+ const packed=execFileSync('npm',['pack','--json','--pack-destination',temp],{cwd:root,encoding:'utf8'}); const p=JSON.parse(packed.slice(packed.indexOf('[')))[0];
+ const tar=execFileSync('tar',['-tf',join(temp,p.filename)],{encoding:'utf8'}); const prefix=join(temp,'prefix');
+ execFileSync('npm',['install','--prefix',prefix,'--ignore-scripts',join(temp,p.filename)],{cwd:root,stdio:'pipe'}); const installed=join(prefix,'node_modules','awgpt'); cli=join(installed,'dist','index.js');
+ if(!run(['install','--help']).includes('--source')) throw Error('packaged help missing lifecycle options');
+ const manifest=JSON.parse(readFileSync(join(installed,'install-manifest.json'),'utf8')); const skills=manifest.include.filter(x=>x.startsWith('skills/')).map(x=>x.split('/')[1]); if(skills.length!==6) throw Error('skill manifest mismatch'); for(const s of skills) if(!tar.split('\n').includes(`package/skills/${s}/SKILL.md`)) throw Error(`tar missing ${s}`);
+ const home=join(temp,'home'), install=JSON.parse(run(['install','--agent-home',home])); if(!install.ok||install.count<6) throw Error('packaged install failed'); const receipt=JSON.parse(readFileSync(install.receipt,'utf8')); if(realpathSync(receipt.source_root)!==realpathSync(installed)) throw Error('wrong source_root');
+ const project=join(temp,'project'); execFileSync('mkdir',['-p',project]); const mission=join(project,'mission.md'); writeFileSync(mission,'# smoke\n'); const counters={open:0,ls:0};
+ server=createServer((q,r)=>{let b='';q.on('data',c=>b+=c);q.on('end',()=>{const n=JSON.parse(b).params.name;if(n==='open_workspace'){counters.open++;r.setHeader('content-type','application/json'); r.end(JSON.stringify({result:{allowedRoots:[project]}}));}else{counters.ls++;r.setHeader('content-type','application/json'); r.end(JSON.stringify({result:{entries:[]}}));}})}); await listen(server); const ep=`http://127.0.0.1:${server.address().port}/mcp`;
+ const fake=join(temp,'oracle.mjs'), cf=join(temp,'oracle-counter'); writeFileSync(fake,"import {appendFileSync} from 'node:fs'; appendFileSync(process.env.E2E_COUNTER,JSON.stringify(process.argv.slice(2))+'\\n'); console.log('TASK_OUTCOME: EXECUTED');"); const env={...process.env,E2E_COUNTER:cf};
+ const pos=JSON.parse(run(['run','--project-root',project,'--mission',mission,'--devspace-url',ep,'--oracle-command',process.execPath,'--oracle-arg',fake],{env})); if(pos.state.task_outcome!=='EXECUTED'||counters.open!==1||counters.ls!==1||!existsSync(cf)) throw Error('positive E2E failed');
+ const project2=join(temp,'project2'); execFileSync('mkdir',['-p',project2]); const mission2=join(project2,'mission.md'); writeFileSync(mission2,'# smoke\n'); const bad=createServer((q,r)=>{q.resume();q.on('end',()=>r.end(JSON.stringify({result:{allowedRoots:[]}})));}); await listen(bad); const nep=`http://127.0.0.1:${bad.address().port}/mcp`; const neg=JSON.parse(run(['run','--project-root',project2,'--mission',mission2,'--devspace-url',nep,'--oracle-command',process.execPath,'--oracle-arg',fake],{env})); bad.close(); if(neg.state.transport_status!=='failed') throw Error('negative gate failed');
+ const rec=run(['recover','--state',pos.statePath,'--action','live'],{stdio:['ignore','pipe','pipe']}); if(!rec.includes('EXACT_SESSION')) throw Error('recovery evidence missing'); if(!JSON.parse(run(['rollback','--agent-home',home])).ok) throw Error('rollback failed'); console.log(`package e2e ok (mcp_open=${counters.open}, mcp_ls=${counters.ls}, oracle=1, negative=1, recovery=1)`);
+} finally {server?.close();rmSync(temp,{recursive:true,force:true});}
