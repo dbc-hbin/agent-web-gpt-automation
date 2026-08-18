@@ -24,7 +24,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) throw new Error('MISSION_ROOT_MISMATCH');
   const bytes = await exactFile(mission); const runId = options.runId ?? `run-${randomUUID()}`;
   let manifest: any;
-  if (options.manifestPath) { const mp=path.resolve(options.manifestPath); const ms=await lstat(mp).catch(()=>undefined); if(!ms?.isFile()||ms.isSymbolicLink()) throw new Error('MANIFEST_PATH_INVALID'); manifest = OracleManifestSchema.parse(JSON.parse(await readFile(await realpath(mp),'utf8'))); if (path.resolve(manifest.project_root)!==root || path.resolve(manifest.mission_path)!==mission) throw new Error('MANIFEST_BINDING_MISMATCH'); }
+  if (options.manifestPath) { const mp=path.resolve(options.manifestPath); const ms=await lstat(mp).catch(()=>undefined); if(!ms?.isFile()||ms.isSymbolicLink()) throw new Error('MANIFEST_PATH_INVALID'); manifest = OracleManifestSchema.parse(JSON.parse(await readFile(await realpath(mp),'utf8'))); const manifestRoot = await realpath(path.resolve(manifest.project_root)).catch(() => path.resolve(manifest.project_root)); const manifestMission = await realpath(path.resolve(manifest.mission_path)).catch(() => path.resolve(manifest.mission_path)); if (manifestRoot!==root || manifestMission!==mission) throw new Error('MANIFEST_BINDING_MISMATCH'); }
   const dir = path.resolve(options.runRoot ?? path.join(root, '.awgpt', runId));
   await mkdir(path.dirname(dir), { recursive: true });
   await mkdir(dir,{recursive:false}).catch((e: any) => { if (e.code === 'EEXIST') throw new Error('RUN_ID_COLLISION'); throw e; });

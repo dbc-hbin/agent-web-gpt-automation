@@ -2179,7 +2179,9 @@ async function runOracle(options) {
     const ms = await lstat5(mp).catch(() => void 0);
     if (!ms?.isFile() || ms.isSymbolicLink()) throw new Error("MANIFEST_PATH_INVALID");
     manifest = OracleManifestSchema.parse(JSON.parse(await readFile9(await realpath2(mp), "utf8")));
-    if (path9.resolve(manifest.project_root) !== root || path9.resolve(manifest.mission_path) !== mission) throw new Error("MANIFEST_BINDING_MISMATCH");
+    const manifestRoot = await realpath2(path9.resolve(manifest.project_root)).catch(() => path9.resolve(manifest.project_root));
+    const manifestMission = await realpath2(path9.resolve(manifest.mission_path)).catch(() => path9.resolve(manifest.mission_path));
+    if (manifestRoot !== root || manifestMission !== mission) throw new Error("MANIFEST_BINDING_MISMATCH");
   }
   const dir = path9.resolve(options.runRoot ?? path9.join(root, ".awgpt", runId));
   await mkdir8(path9.dirname(dir), { recursive: true });
