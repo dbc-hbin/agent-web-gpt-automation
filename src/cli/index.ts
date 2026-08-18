@@ -6,7 +6,7 @@ import { preflightCopiedProfile } from '../core/process/auth-preflight.js';
 import { recoverChatGptLogin } from '../core/process/cookie-recovery.js';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { runOracle, loadRunState } from '../core/run/runtime.js';
+import { runOracle, loadRunState, stopRecorded } from '../core/run/runtime.js';
 import { planExactRecovery, executeExactRecovery } from '../core/forensics/recovery.js';
 import { proveNoSubmission } from '../core/forensics/no-submission.js';
 
@@ -144,7 +144,7 @@ export function createCLI(): Command {
   program.command('audit').requiredOption('--state <path>').description('Prove no submission without launching Oracle')
     .action(async o => { const evidence=await proveNoSubmission(o.state); console.log(JSON.stringify(evidence ?? {ok:false},null,2)); if(!evidence) process.exitCode=2; });
   program.command('stop').requiredOption('--state <path>').description('Refuse unsafe stop unless state is owned and live')
-    .action(async o => { try { const state=await loadRunState(o.state); if(state.session_authority!=='live' && state.session_authority!=='submitted_unknown') throw new Error('STOP_UNSAFE_AUTHORITY'); throw new Error('STOP_REQUIRES_ACTIVE_SUPERVISOR'); } catch(e){ console.error(e instanceof Error?e.message:e); process.exitCode=1; } });
+    .action(async o => { try { await stopRecorded(o.state); console.log(JSON.stringify({ok:true})); } catch(e){ console.error(e instanceof Error?e.message:e); process.exitCode=1; } });
 
   return program;
 }
