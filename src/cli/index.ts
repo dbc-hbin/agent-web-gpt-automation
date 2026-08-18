@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import { runOracle, loadRunState, stopRecorded } from '../core/run/runtime.js';
 import { planExactRecovery, executeExactRecovery } from '../core/forensics/recovery.js';
 import { proveNoSubmission } from '../core/forensics/no-submission.js';
+import { createHttpDevSpaceClient } from '../core/devspace/http-client.js';
 
 export function createCLI(): Command {
   const program = new Command();
@@ -134,8 +135,9 @@ export function createCLI(): Command {
     .option('--oracle-command <path>')
     .option('--oracle-arg <value...>')
     .option('--oracle-home <path>')
+    .option('--devspace-url <url>', 'DevSpace MCP endpoint', 'http://127.0.0.1:7676/mcp')
     .action(async options => {
-      try { console.log(JSON.stringify(await runOracle({ projectRoot: options.projectRoot, missionPath: options.mission, runRoot: options.runRoot, manifestPath: options.manifest, oracleCommand: options.oracleCommand ? [options.oracleCommand] : undefined, oracleArgs: options.oracleArg, oracleHome: options.oracleHome }), null, 2)); }
+      try { const client = createHttpDevSpaceClient(options.devspaceUrl); const devspace = { qualify: async (root: string) => { const { qualifyExactProjectRoot } = await import('../core/devspace/qualification.js'); const result = await qualifyExactProjectRoot(root, client); return { ok: result.ok, reason: result.code }; } }; console.log(JSON.stringify(await runOracle({ projectRoot: options.projectRoot, missionPath: options.mission, runRoot: options.runRoot, manifestPath: options.manifest, oracleCommand: options.oracleCommand ? [options.oracleCommand] : undefined, oracleArgs: options.oracleArg, oracleHome: options.oracleHome, devspace }), null, 2)); }
       catch (e) { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; }
     });
 

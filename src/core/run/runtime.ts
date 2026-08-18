@@ -20,6 +20,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   const statePath = path.join(dir,'state.json');
   const initial: OracleRunState = { schema:'codex.chatgpt.oracle-run-state/v1', run_id:runId, project_root:root, mission_path:mission, mode:'browser', session_authority:'pre_submit', transport_status:'pending', task_outcome:'pending' };
   const lock = new LockManager({ projectRoot: root }); const release = await lock.acquire();
+  let retainLock = false;
   try {
     await writeFile(statePath, JSON.stringify(initial,null,2)+'\n');
     if (options.devspace) { const q=await options.devspace.qualify(root, options.manifestPath); if (!q.ok) { const failed={...initial,session_authority:'settled' as SessionAuthority,transport_status:'failed' as const}; await writeFile(statePath,JSON.stringify(failed,null,2)); return {statePath,state:failed}; } }
@@ -34,9 +35,10 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
     let outcome:'EXECUTED'|'NOT_EXECUTED'|'BLOCKED'|'pending'='pending'; let authority: SessionAuthority=out.exitCode===0?'terminal_observed':'submitted_unknown';
     if (out.exitCode===0) { try { outcome=parseTaskOutcome(stdout).outcome; } catch { authority='submitted_unknown'; } }
     if (out.exitCode===0) await writeFile(path.join(dir,'output.md'), stdout);
+    retainLock = (authority as SessionAuthority) === 'submitted_unknown' || (authority as SessionAuthority) === 'live';
     const state: OracleRunState={...initial,session_authority:authority,transport_status:out.exitCode===0?'complete':'failed',task_outcome:outcome,artifacts:{output:path.join(dir,'output.md'),transcript:path.join(dir,'transcript.md'),stdout:path.join(dir,'stdout.log'),stderr:path.join(dir,'stderr.log'),browser_temp:dir}};
     await writeFile(statePath,JSON.stringify(state,null,2)+'\n'); return {statePath,state};
-  } finally { await release(); }
+  } finally { if (!retainLock) await release(); }
 }
 export async function loadRunState(statePath:string){ return OracleRunStateSchema.parse(JSON.parse(await readFile(path.resolve(statePath),'utf8'))) }
 export async function stopRecorded(statePath:string): Promise<void> {

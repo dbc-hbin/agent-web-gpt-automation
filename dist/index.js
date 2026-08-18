@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import {
+  qualifyExactProjectRoot
+} from "./chunk-GXIWVMVH.js";
 
 // src/cli/index.ts
 import { Command } from "commander";
@@ -7,7 +10,7 @@ import { Command } from "commander";
 import { z as z3 } from "zod";
 import { access, chmod, mkdir as mkdir3, mkdtemp, readdir, readFile as readFile4 } from "node:fs/promises";
 import { constants } from "node:fs";
-import * as path5 from "node:path";
+import * as path4 from "node:path";
 import * as os2 from "node:os";
 import { spawn } from "node:child_process";
 
@@ -553,7 +556,7 @@ async function terminatePersistedProcess(record) {
     if (error.code !== "ESRCH") throw error;
   }
   for (let attempt = 0; attempt < 50 && pidIsAlive(record.pid); attempt += 1) {
-    await new Promise((resolve14) => setTimeout(resolve14, 100));
+    await new Promise((resolve13) => setTimeout(resolve13, 100));
   }
   if (pidIsAlive(record.pid)) {
     try {
@@ -720,34 +723,6 @@ async function executeExactRecovery(plan) {
   };
 }
 
-// src/core/devspace/qualification.ts
-import * as path4 from "node:path";
-function rootsFrom(value) {
-  if (!value || typeof value !== "object") return [];
-  const obj = value;
-  const roots = obj.allowedRoots ?? obj.allowed_roots ?? obj.result?.allowedRoots;
-  return Array.isArray(roots) ? roots.filter((v) => typeof v === "string").map((v) => path4.resolve(v)) : [];
-}
-async function qualifyExactProjectRoot(projectRoot, client) {
-  const root = path4.resolve(projectRoot);
-  let opened;
-  try {
-    opened = await client.open_workspace({ root });
-  } catch (error) {
-    return { ok: false, code: "DEVSPACE_OPEN_WORKSPACE_FAILED", projectRoot: root, detail: String(error) };
-  }
-  const allowedRoots = rootsFrom(opened);
-  if (allowedRoots.length !== 1 || allowedRoots[0] !== root) {
-    return { ok: false, code: "DEVSPACE_EXACT_ROOT_MISMATCH", projectRoot: root, allowedRoots };
-  }
-  try {
-    await client.list_directory({ path: root });
-  } catch (error) {
-    return { ok: false, code: "DEVSPACE_READONLY_TOOL_FAILED", projectRoot: root, allowedRoots, detail: String(error) };
-  }
-  return { ok: true, code: "DEVSPACE_EXACT_ROOT_QUALIFIED", projectRoot: root, allowedRoots };
-}
-
 // src/cli/doctor.ts
 var DoctorCheck = z3.object({
   name: z3.string(),
@@ -776,10 +751,10 @@ var DoctorReport = z3.object({
 });
 var DEVSPACE_ACCEPTED_STATUSES = /* @__PURE__ */ new Set([200, 401, 403, 405, 406]);
 var CHATGPT_LOGIN_URL = "https://chatgpt.com/auth/login";
-async function prepareProfileLogin(oracleHome = path5.join(os2.homedir(), ".oracle")) {
-  const root = path5.resolve(oracleHome, "login-profiles");
+async function prepareProfileLogin(oracleHome = path4.join(os2.homedir(), ".oracle")) {
+  const root = path4.resolve(oracleHome, "login-profiles");
   await mkdir3(root, { recursive: true, mode: 448 });
-  const profilePath = await mkdtemp(path5.join(root, "manual-login-"));
+  const profilePath = await mkdtemp(path4.join(root, "manual-login-"));
   if (process.platform !== "win32") await chmod(profilePath, 448);
   return { profile_path: profilePath, url: CHATGPT_LOGIN_URL };
 }
@@ -791,10 +766,10 @@ async function launchProfileLogin(target) {
     stdio: "ignore",
     windowsHide: true
   });
-  await new Promise((resolve14, reject) => {
+  await new Promise((resolve13, reject) => {
     const onSpawn = () => {
       child.off("error", onError);
-      resolve14();
+      resolve13();
     };
     const onError = (error) => {
       child.off("spawn", onSpawn);
@@ -822,15 +797,15 @@ async function checkDevSpace(target = "http://127.0.0.1:7676/mcp", fetcher = fet
   }
 }
 async function checkProfile(copyProfilePath) {
-  const root = path5.resolve(copyProfilePath);
+  const root = path4.resolve(copyProfilePath);
   const cookieCandidates = [
-    path5.join(root, "Default", "Network", "Cookies"),
-    path5.join(root, "Default", "Cookies")
+    path4.join(root, "Default", "Network", "Cookies"),
+    path4.join(root, "Default", "Cookies")
   ];
   try {
     await Promise.all([
-      access(path5.join(root, "Local State"), constants.R_OK),
-      access(path5.join(root, "Default", "Local Storage"), constants.R_OK)
+      access(path4.join(root, "Local State"), constants.R_OK),
+      access(path4.join(root, "Default", "Local Storage"), constants.R_OK)
     ]);
     for (const candidate of cookieCandidates) {
       try {
@@ -858,7 +833,7 @@ async function auditOracleState(statePath) {
       run_id: sessionState.run_id,
       session_authority: normalizeOracleSessionAuthority(sessionState.session_authority),
       exact_slug: sessionState.oracle?.slug,
-      state_path: path5.resolve(statePath),
+      state_path: path4.resolve(statePath),
       state_schema: "oracle-run"
     };
   }
@@ -871,7 +846,7 @@ async function auditOracleState(statePath) {
     run_id: state.run_id,
     session_authority: state.session_authority,
     exact_slug: exactSlug,
-    state_path: path5.resolve(statePath),
+    state_path: path4.resolve(statePath),
     state_schema: state.schema === "codex.chatgpt.oracle-run-state/v1" ? "oracle-run" : "workflow"
   };
 }
@@ -886,7 +861,7 @@ async function discoverStatePaths(root) {
       return;
     }
     await Promise.all(entries.map(async (entry) => {
-      const candidate = path5.join(directory, entry.name);
+      const candidate = path4.join(directory, entry.name);
       if (entry.isDirectory()) await walk(candidate, depth + 1);
       else if (entry.isFile() && entry.name === "state.json") found.push(candidate);
     }));
@@ -896,11 +871,11 @@ async function discoverStatePaths(root) {
 }
 async function runDoctor(options) {
   const normalized = typeof options === "string" ? { projectRoot: options } : options;
-  const projectRoot = path5.resolve(normalized.projectRoot);
-  const profilePath = path5.resolve(
-    normalized.copyProfilePath ?? path5.join(os2.homedir(), ".oracle", "browser-profile")
+  const projectRoot = path4.resolve(normalized.projectRoot);
+  const profilePath = path4.resolve(
+    normalized.copyProfilePath ?? path4.join(os2.homedir(), ".oracle", "browser-profile")
   );
-  const oracleHome = path5.resolve(normalized.oracleHome ?? path5.join(os2.homedir(), ".oracle"));
+  const oracleHome = path4.resolve(normalized.oracleHome ?? path4.join(os2.homedir(), ".oracle"));
   const checks = [];
   const nextActions = [];
   if (normalized.devspaceClient) {
@@ -993,7 +968,7 @@ async function runDoctor(options) {
       recovery_action: normalized.recover ? { kind: "profile_login", status: "BLOCKED", detail: "Manual authentication is required." } : void 0
     });
   }
-  const statePaths = normalized.statePaths ?? await discoverStatePaths(path5.join(oracleHome, "state", "chatgpt-oracle"));
+  const statePaths = normalized.statePaths ?? await discoverStatePaths(path4.join(oracleHome, "state", "chatgpt-oracle"));
   const sessions = [];
   try {
     for (const statePath of statePaths) sessions.push(await auditOracleState(statePath));
@@ -1020,8 +995,8 @@ async function runDoctor(options) {
     });
   }
   if (normalized.recover) {
-    const registry = new ProcessRegistry(path5.join(oracleHome, "processes.json"));
-    const running = (await registry.list()).filter((record) => record.state === "running" && record.project_root && path5.resolve(record.project_root) === projectRoot);
+    const registry = new ProcessRegistry(path4.join(oracleHome, "processes.json"));
+    const running = (await registry.list()).filter((record) => record.state === "running" && record.project_root && path4.resolve(record.project_root) === projectRoot);
     if (running.length > 0) {
       const protectedOwners = new Set(sessions.filter((session) => ["live", "submitted_unknown"].includes(session.session_authority)).flatMap((session) => [session.run_id, session.exact_slug].filter((value) => Boolean(value))));
       const cleanableOwners = new Set(sessions.filter((session) => ["pre_submit", "terminal_observed", "settled"].includes(session.session_authority)).flatMap((session) => [session.run_id, session.exact_slug].filter((value) => Boolean(value))));
@@ -1194,11 +1169,11 @@ async function runDoctor(options) {
 // src/cli/lifecycle.ts
 import { createHash as createHash4, randomUUID as randomUUID2 } from "node:crypto";
 import { copyFile, lstat as lstat2, mkdir as mkdir4, readFile as readFile5, readdir as readdir2, rm as rm3 } from "node:fs/promises";
-import * as path6 from "node:path";
+import * as path5 from "node:path";
 import writeFileAtomic4 from "write-file-atomic";
 import { z as z4 } from "zod";
 function resolvePackageSource(metaUrl = import.meta.url) {
-  return path6.resolve(new URL("../../", metaUrl).pathname);
+  return path5.resolve(new URL("../../", metaUrl).pathname);
 }
 var RECEIPT_SCHEMA = "codex.chatgpt.install-receipt/v1";
 var WAL_SCHEMA = "codex.chatgpt.install-wal/v1";
@@ -1238,17 +1213,17 @@ async function sha256File(file) {
   return sha256(await readFile5(file));
 }
 async function writeJsonAtomic(file, value) {
-  await mkdir4(path6.dirname(file), { recursive: true });
+  await mkdir4(path5.dirname(file), { recursive: true });
   await writeFileAtomic4(file, `${JSON.stringify(value, null, 2)}
 `, { fsync: true });
 }
 function safeChild(root, relative5) {
-  if (!relative5 || path6.isAbsolute(relative5) || relative5.split(/[\\/]/).some((part) => !part || part === "." || part === "..")) {
+  if (!relative5 || path5.isAbsolute(relative5) || relative5.split(/[\\/]/).some((part) => !part || part === "." || part === "..")) {
     throw new Error(`LIFECYCLE_PATH_UNSAFE: ${relative5}`);
   }
-  const absoluteRoot = path6.resolve(root);
-  const candidate = path6.resolve(absoluteRoot, relative5);
-  if (candidate === absoluteRoot || !candidate.startsWith(`${absoluteRoot}${path6.sep}`)) {
+  const absoluteRoot = path5.resolve(root);
+  const candidate = path5.resolve(absoluteRoot, relative5);
+  if (candidate === absoluteRoot || !candidate.startsWith(`${absoluteRoot}${path5.sep}`)) {
     throw new Error(`LIFECYCLE_PATH_ESCAPE: ${relative5}`);
   }
   return candidate;
@@ -1258,11 +1233,11 @@ async function assertNoSymlink(root, candidate) {
   while (cursor !== root) {
     const stat = await lstat2(cursor).catch(() => void 0);
     if (stat?.isSymbolicLink()) throw new Error(`LIFECYCLE_SYMLINK_REFUSED: ${cursor}`);
-    cursor = path6.dirname(cursor);
+    cursor = path5.dirname(cursor);
   }
 }
 async function copyAtomic(source, destination) {
-  await mkdir4(path6.dirname(destination), { recursive: true });
+  await mkdir4(path5.dirname(destination), { recursive: true });
   const temporary = `${destination}.${randomUUID2()}.tmp`;
   try {
     await copyFile(source, temporary);
@@ -1273,18 +1248,18 @@ async function copyAtomic(source, destination) {
 }
 async function expandPattern(root, pattern) {
   if (!pattern.includes("*")) return [pattern];
-  const directory = path6.dirname(pattern);
-  const basename4 = path6.basename(pattern);
+  const directory = path5.dirname(pattern);
+  const basename4 = path5.basename(pattern);
   if ((basename4.match(/\*/g) ?? []).length !== 1 || basename4 !== `*.${basename4.split(".").at(-1)}`) {
     throw new Error(`LIFECYCLE_GLOB_UNSUPPORTED: ${pattern}`);
   }
   const suffix = basename4.slice(1);
   const names = await readdir2(safeChild(root, directory));
-  return names.filter((name) => name.endsWith(suffix)).sort().map((name) => path6.join(directory, name));
+  return names.filter((name) => name.endsWith(suffix)).sort().map((name) => path5.join(directory, name));
 }
 async function manifestFiles(sourceRoot) {
-  const root = path6.resolve(sourceRoot);
-  const manifest = InstallManifestSchema.parse(JSON.parse(await readFile5(path6.join(root, "install-manifest.json"), "utf8")));
+  const root = path5.resolve(sourceRoot);
+  const manifest = InstallManifestSchema.parse(JSON.parse(await readFile5(path5.join(root, "install-manifest.json"), "utf8")));
   const files = /* @__PURE__ */ new Set();
   for (const pattern of manifest.include) {
     for (const relative5 of await expandPattern(root, pattern)) {
@@ -1298,21 +1273,21 @@ async function manifestFiles(sourceRoot) {
   return { version: manifest.version, files: [...files].sort() };
 }
 async function latestReceipt(agentHome) {
-  const root = path6.join(agentHome, "receipts");
+  const root = path5.join(agentHome, "receipts");
   const names = (await readdir2(root)).filter((name) => /^agent-web-gpt-.+\.json$/.test(name)).sort();
   if (!names.length) throw new Error("LIFECYCLE_RECEIPT_MISSING");
-  return path6.join(root, names.at(-1));
+  return path5.join(root, names.at(-1));
 }
 async function recoverPendingInstalls(agentHome) {
-  const home = path6.resolve(agentHome);
-  const backupsRoot = path6.join(home, "backups");
+  const home = path5.resolve(agentHome);
+  const backupsRoot = path5.join(home, "backups");
   const names = await readdir2(backupsRoot).catch((error) => {
     if (error.code === "ENOENT") return [];
     throw error;
   });
   const recovered = [];
   for (const name of names.sort()) {
-    const walPath = path6.join(backupsRoot, name, "install.wal.json");
+    const walPath = path5.join(backupsRoot, name, "install.wal.json");
     let wal;
     try {
       wal = InstallWalSchema.parse(JSON.parse(await readFile5(walPath, "utf8")));
@@ -1321,8 +1296,8 @@ async function recoverPendingInstalls(agentHome) {
       throw error;
     }
     if (wal.status !== "ACTIVE") continue;
-    const backup2 = path6.resolve(wal.backup);
-    if (!backup2.startsWith(`${backupsRoot}${path6.sep}`)) throw new Error("LIFECYCLE_WAL_NOT_OWNED");
+    const backup2 = path5.resolve(wal.backup);
+    if (!backup2.startsWith(`${backupsRoot}${path5.sep}`)) throw new Error("LIFECYCLE_WAL_NOT_OWNED");
     const conflicts = [];
     for (const record of [...wal.files].reverse()) {
       const destination = safeChild(home, record.path);
@@ -1342,15 +1317,15 @@ async function recoverPendingInstalls(agentHome) {
   return recovered;
 }
 async function installOrUpdate(action, sourceRoot, agentHome) {
-  const source = path6.resolve(sourceRoot);
-  const home = path6.resolve(agentHome);
+  const source = path5.resolve(sourceRoot);
+  const home = path5.resolve(agentHome);
   const manifest = await manifestFiles(source);
   await mkdir4(home, { recursive: true });
   await recoverPendingInstalls(home);
   const stamp = `${(/* @__PURE__ */ new Date()).toISOString().replace(/[-:.TZ]/g, "")}-${randomUUID2()}`;
-  const backup2 = path6.join(home, "backups", `agent-web-gpt-${stamp}`);
-  const receiptPath = path6.join(home, "receipts", `agent-web-gpt-${stamp}.json`);
-  const walPath = path6.join(backup2, "install.wal.json");
+  const backup2 = path5.join(home, "backups", `agent-web-gpt-${stamp}`);
+  const receiptPath = path5.join(home, "receipts", `agent-web-gpt-${stamp}.json`);
+  const walPath = path5.join(backup2, "install.wal.json");
   const records = [];
   const wal = { schema: WAL_SCHEMA, status: "ACTIVE", action, backup: backup2, files: records };
   await writeJsonAtomic(walPath, wal);
@@ -1417,12 +1392,12 @@ async function rollbackRecords(home, backup2, records) {
   return conflicts;
 }
 async function rollbackInstall(agentHome, requestedReceipt) {
-  const home = path6.resolve(agentHome);
-  const receiptPath = path6.resolve(requestedReceipt ?? await latestReceipt(home));
-  const receiptsRoot = path6.join(home, "receipts");
-  if (!receiptPath.startsWith(`${receiptsRoot}${path6.sep}`)) throw new Error("LIFECYCLE_RECEIPT_NOT_OWNED");
+  const home = path5.resolve(agentHome);
+  const receiptPath = path5.resolve(requestedReceipt ?? await latestReceipt(home));
+  const receiptsRoot = path5.join(home, "receipts");
+  if (!receiptPath.startsWith(`${receiptsRoot}${path5.sep}`)) throw new Error("LIFECYCLE_RECEIPT_NOT_OWNED");
   const receipt = InstallReceiptSchema.parse(JSON.parse(await readFile5(receiptPath, "utf8")));
-  if (path6.resolve(receipt.agent_home) !== home || !path6.resolve(receipt.backup).startsWith(`${path6.join(home, "backups")}${path6.sep}`)) {
+  if (path5.resolve(receipt.agent_home) !== home || !path5.resolve(receipt.backup).startsWith(`${path5.join(home, "backups")}${path5.sep}`)) {
     throw new Error("LIFECYCLE_RECEIPT_NOT_OWNED");
   }
   const conflicts = await rollbackRecords(home, receipt.backup, receipt.files);
@@ -1438,7 +1413,7 @@ async function rollbackInstall(agentHome, requestedReceipt) {
 // src/core/process/profiles.ts
 import { z as z5 } from "zod";
 import * as crypto2 from "node:crypto";
-import * as path7 from "node:path";
+import * as path6 from "node:path";
 import { access as access2, chmod as chmod2, cp, lstat as lstat3, mkdir as mkdir5, readdir as readdir3, rm as rm4 } from "node:fs/promises";
 import { constants as constants2 } from "node:fs";
 var ProfileConfig = z5.object({
@@ -1448,8 +1423,8 @@ var ProfileConfig = z5.object({
 var ProfileManager = class {
   constructor(config, oracleHome) {
     this.oracleHome = oracleHome;
-    this.seedPath = path7.resolve(config.sourceProfilePath);
-    this.sessionRoot = path7.resolve(oracleHome, "browser-sessions");
+    this.seedPath = path6.resolve(config.sourceProfilePath);
+    this.sessionRoot = path6.resolve(oracleHome, "browser-sessions");
   }
   oracleHome;
   profiles = /* @__PURE__ */ new Map();
@@ -1461,7 +1436,7 @@ var ProfileManager = class {
     const source = await lstat3(this.seedPath);
     if (!source.isDirectory() || source.isSymbolicLink()) throw new Error("PROFILE_SEED_INVALID");
     await mkdir5(this.sessionRoot, { recursive: true, mode: 448 });
-    const copyTo = path7.join(this.sessionRoot, `${id}-${crypto2.randomUUID()}`);
+    const copyTo = path6.join(this.sessionRoot, `${id}-${crypto2.randomUUID()}`);
     try {
       await cp(this.seedPath, copyTo, {
         recursive: true,
@@ -1494,8 +1469,8 @@ var ProfileManager = class {
     if (!info) return false;
     try {
       await Promise.all([
-        access2(path7.join(info.copiedPath, "Local State"), constants2.R_OK),
-        access2(path7.join(info.copiedPath, "Default", "Local Storage"), constants2.R_OK),
+        access2(path6.join(info.copiedPath, "Local State"), constants2.R_OK),
+        access2(path6.join(info.copiedPath, "Default", "Local Storage"), constants2.R_OK),
         this.findReadableCookies(info.copiedPath)
       ]);
       info.isValid = true;
@@ -1508,8 +1483,8 @@ var ProfileManager = class {
   async removeProfile(profileId) {
     const info = this.profiles.get(profileId);
     if (!info) return;
-    const relative5 = path7.relative(this.sessionRoot, info.copiedPath);
-    if (relative5.startsWith("..") || path7.isAbsolute(relative5)) {
+    const relative5 = path6.relative(this.sessionRoot, info.copiedPath);
+    if (relative5.startsWith("..") || path6.isAbsolute(relative5)) {
       throw new Error("PROFILE_PATH_OUTSIDE_SESSION_ROOT");
     }
     await rm4(info.copiedPath, { recursive: true, force: true });
@@ -1520,8 +1495,8 @@ var ProfileManager = class {
   }
   async findReadableCookies(profileRoot) {
     const candidates = [
-      path7.join(profileRoot, "Default", "Network", "Cookies"),
-      path7.join(profileRoot, "Default", "Cookies")
+      path6.join(profileRoot, "Default", "Network", "Cookies"),
+      path6.join(profileRoot, "Default", "Cookies")
     ];
     for (const candidate of candidates) {
       try {
@@ -1538,7 +1513,7 @@ var ProfileManager = class {
     if (metadata.isDirectory()) {
       await chmod2(target, 448);
       const entries = await readdir3(target);
-      for (const entry of entries) await this.hardenProfileTree(path7.join(target, entry));
+      for (const entry of entries) await this.hardenProfileTree(path6.join(target, entry));
       return;
     }
     await chmod2(target, 384);
@@ -1548,7 +1523,7 @@ var ProfileManager = class {
 // src/core/process/auth-preflight.ts
 import { execa as execa3 } from "execa";
 import { access as access3, readFile as readFile6 } from "node:fs/promises";
-import * as path8 from "node:path";
+import * as path7 from "node:path";
 function evaluateAuthSnapshot(snapshot) {
   if ([401, 403].includes(snapshot.backend_status) || snapshot.login_cta) {
     return { ...snapshot, ok: false, code: "AUTH_LOGIN_REQUIRED" };
@@ -1566,11 +1541,11 @@ async function cdpEvaluate(webSocketUrl) {
     const message = JSON.parse(String(event.data));
     if (message.id != null) pending.get(message.id)?.(message.error ? { error: message.error } : message.result);
   });
-  await new Promise((resolve14, reject) => {
-    socket.addEventListener("open", () => resolve14());
+  await new Promise((resolve13, reject) => {
+    socket.addEventListener("open", () => resolve13());
     socket.addEventListener("error", () => reject(new Error("AUTH_PREFLIGHT_CDP_CONNECT_FAILED")));
   });
-  const call = (method, params = {}) => new Promise((resolve14, reject) => {
+  const call = (method, params = {}) => new Promise((resolve13, reject) => {
     const id = ++nextId;
     const timer = setTimeout(() => {
       pending.delete(id);
@@ -1579,7 +1554,7 @@ async function cdpEvaluate(webSocketUrl) {
     pending.set(id, (value) => {
       clearTimeout(timer);
       pending.delete(id);
-      resolve14(value);
+      resolve13(value);
     });
     socket.send(JSON.stringify({ id, method, params }));
   });
@@ -1598,7 +1573,7 @@ async function cdpEvaluate(webSocketUrl) {
     })()`;
     let latest;
     for (let attempt = 0; attempt < 30; attempt += 1) {
-      await new Promise((resolve14) => setTimeout(resolve14, 1e3));
+      await new Promise((resolve13) => setTimeout(resolve13, 1e3));
       const response = await call("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
       if (!response.exceptionDetails && response.result?.value) {
         latest = response.result.value;
@@ -1629,11 +1604,11 @@ async function preflightCopiedProfile(profilePath, chromePath) {
     "--no-first-run",
     "--no-default-browser-check",
     "--remote-debugging-port=0",
-    `--user-data-dir=${path8.resolve(profilePath)}`,
+    `--user-data-dir=${path7.resolve(profilePath)}`,
     "about:blank"
   ], { reject: false, windowsHide: true, detached: process.platform !== "win32" });
   try {
-    const portFile = path8.join(path8.resolve(profilePath), "DevToolsActivePort");
+    const portFile = path7.join(path7.resolve(profilePath), "DevToolsActivePort");
     let port;
     for (let attempt = 0; attempt < 100; attempt += 1) {
       try {
@@ -1641,7 +1616,7 @@ async function preflightCopiedProfile(profilePath, chromePath) {
         if (/^\d+$/.test(port)) break;
       } catch {
       }
-      await new Promise((resolve14) => setTimeout(resolve14, 100));
+      await new Promise((resolve13) => setTimeout(resolve13, 100));
     }
     if (!port || !/^\d+$/.test(port)) throw new Error("AUTH_PREFLIGHT_CHROME_START_TIMEOUT");
     return await probeBrowserAuth(`http://127.0.0.1:${port}`);
@@ -1649,16 +1624,16 @@ async function preflightCopiedProfile(profilePath, chromePath) {
     proc.kill("SIGTERM");
     await Promise.race([
       proc.catch(() => void 0),
-      new Promise((resolve14) => setTimeout(resolve14, 5e3))
+      new Promise((resolve13) => setTimeout(resolve13, 5e3))
     ]);
     if (proc.exitCode == null) proc.kill("SIGKILL");
   }
 }
 async function findChrome() {
   const candidates = process.platform === "darwin" ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"] : process.platform === "win32" ? [
-    path8.join(process.env.PROGRAMFILES ?? "", "Google", "Chrome", "Application", "chrome.exe"),
-    path8.join(process.env["PROGRAMFILES(X86)"] ?? "", "Google", "Chrome", "Application", "chrome.exe"),
-    path8.join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "Application", "chrome.exe")
+    path7.join(process.env.PROGRAMFILES ?? "", "Google", "Chrome", "Application", "chrome.exe"),
+    path7.join(process.env["PROGRAMFILES(X86)"] ?? "", "Google", "Chrome", "Application", "chrome.exe"),
+    path7.join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "Application", "chrome.exe")
   ] : ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"];
   for (const candidate of candidates) {
     try {
@@ -1683,7 +1658,7 @@ import {
   rm as rm5
 } from "node:fs/promises";
 import * as os3 from "node:os";
-import * as path9 from "node:path";
+import * as path8 from "node:path";
 import writeFileAtomic5 from "write-file-atomic";
 var COOKIE_SCOPE_SQL = `(
   host_key = 'chatgpt.com' OR host_key LIKE '%.chatgpt.com'
@@ -1691,14 +1666,14 @@ var COOKIE_SCOPE_SQL = `(
 )`;
 function defaultChromeUserDataRoot() {
   if (process.platform === "darwin") {
-    return path9.join(os3.homedir(), "Library", "Application Support", "Google", "Chrome");
+    return path8.join(os3.homedir(), "Library", "Application Support", "Google", "Chrome");
   }
   if (process.platform === "win32") {
     const local = process.env.LOCALAPPDATA;
     if (!local) throw new Error("CHROME_USER_DATA_ROOT_UNAVAILABLE");
-    return path9.join(local, "Google", "Chrome", "User Data");
+    return path8.join(local, "Google", "Chrome", "User Data");
   }
-  return path9.join(os3.homedir(), ".config", "google-chrome");
+  return path8.join(os3.homedir(), ".config", "google-chrome");
 }
 async function assertRegularFile(file, code) {
   const metadata = await lstat4(file);
@@ -1717,7 +1692,7 @@ function validateProfileName(value) {
 async function discoverSourceProfile(root, explicit) {
   if (explicit) return validateProfileName(explicit);
   try {
-    const localState = JSON.parse(await readFile7(path9.join(root, "Local State"), "utf8"));
+    const localState = JSON.parse(await readFile7(path8.join(root, "Local State"), "utf8"));
     if (typeof localState.profile?.last_used === "string") {
       return validateProfileName(localState.profile.last_used);
     }
@@ -1727,8 +1702,8 @@ async function discoverSourceProfile(root, explicit) {
 }
 async function findCookies(profileRoot) {
   const candidates = [
-    path9.join(profileRoot, "Network", "Cookies"),
-    path9.join(profileRoot, "Cookies")
+    path8.join(profileRoot, "Network", "Cookies"),
+    path8.join(profileRoot, "Cookies")
   ];
   for (const candidate of candidates) {
     try {
@@ -1743,7 +1718,7 @@ async function findCookies(profileRoot) {
 async function assertSeedClosed(seedPath) {
   for (const name of ["SingletonLock", "SingletonSocket", "SingletonCookie", "DevToolsActivePort"]) {
     try {
-      await lstat4(path9.join(seedPath, name));
+      await lstat4(path8.join(seedPath, name));
       throw new Error("PROFILE_SEED_IN_USE");
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
@@ -1753,7 +1728,7 @@ async function assertSeedClosed(seedPath) {
 async function assertQuiescent(directory) {
   for (const name of ["SingletonLock", "SingletonSocket", "SingletonCookie", "DevToolsActivePort"]) {
     try {
-      await lstat4(path9.join(directory, name));
+      await lstat4(path8.join(directory, name));
       throw new Error("CHROME_PROFILE_IN_USE");
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
@@ -1839,9 +1814,9 @@ async function restoreCookieFiles(target, original, sidecars, originalLocalState
   }
 }
 async function recoverChatGptLogin(options) {
-  const seed = path9.resolve(options.seedPath);
-  const oracleHome = path9.resolve(options.oracleHome ?? path9.join(os3.homedir(), ".oracle"));
-  const sourceRoot = path9.resolve(options.sourceUserDataRoot ?? defaultChromeUserDataRoot());
+  const seed = path8.resolve(options.seedPath);
+  const oracleHome = path8.resolve(options.oracleHome ?? path8.join(os3.homedir(), ".oracle"));
+  const sourceRoot = path8.resolve(options.sourceUserDataRoot ?? defaultChromeUserDataRoot());
   await Promise.all([
     assertDirectory(seed, "PROFILE_SEED_INVALID"),
     assertDirectory(sourceRoot, "CHROME_USER_DATA_ROOT_INVALID"),
@@ -1850,21 +1825,21 @@ async function recoverChatGptLogin(options) {
   if (seed === sourceRoot) throw new Error("COOKIE_RECOVERY_SOURCE_EQUALS_SEED");
   const sourceProfile = await discoverSourceProfile(sourceRoot, options.sourceProfile);
   await assertQuiescent(sourceRoot);
-  await assertQuiescent(path9.join(sourceRoot, sourceProfile));
-  const sourceCookies = await findCookies(path9.join(sourceRoot, sourceProfile));
-  const targetCookies = await findCookies(path9.join(seed, "Default"));
-  const sourceLocalState = path9.join(sourceRoot, "Local State");
-  const targetLocalState = path9.join(seed, "Local State");
+  await assertQuiescent(path8.join(sourceRoot, sourceProfile));
+  const sourceCookies = await findCookies(path8.join(sourceRoot, sourceProfile));
+  const targetCookies = await findCookies(path8.join(seed, "Default"));
+  const sourceLocalState = path8.join(sourceRoot, "Local State");
+  const targetLocalState = path8.join(seed, "Local State");
   await Promise.all([
     assertRegularFile(sourceLocalState, "CHROME_LOCAL_STATE_INVALID"),
     assertRegularFile(targetLocalState, "PROFILE_LOCAL_STATE_INVALID")
   ]);
-  const work = path9.join(path9.dirname(seed), `.cookie-recovery-${randomUUID4()}`);
+  const work = path8.join(path8.dirname(seed), `.cookie-recovery-${randomUUID4()}`);
   await mkdir6(work, { recursive: false, mode: 448 });
-  const sourceSnapshot = path9.join(work, "source-cookies.sqlite");
-  const candidate = path9.join(work, "candidate-cookies.sqlite");
-  const originalCookies = path9.join(work, "original-cookies.sqlite");
-  const displacedCookies = path9.join(work, "displaced-cookies.sqlite");
+  const sourceSnapshot = path8.join(work, "source-cookies.sqlite");
+  const candidate = path8.join(work, "candidate-cookies.sqlite");
+  const originalCookies = path8.join(work, "original-cookies.sqlite");
+  const displacedCookies = path8.join(work, "displaced-cookies.sqlite");
   let originalLocalState;
   let replaced = false;
   const originalSidecars = [];
@@ -1971,17 +1946,17 @@ async function recoverChatGptLogin(options) {
 
 // src/cli/index.ts
 import * as os4 from "node:os";
-import * as path12 from "node:path";
+import * as path11 from "node:path";
 
 // src/core/run/runtime.ts
 import { createHash as createHash5, randomUUID as randomUUID5 } from "node:crypto";
 import { lstat as lstat5, mkdir as mkdir7, readFile as readFile8, writeFile as writeFile2 } from "node:fs/promises";
-import * as path10 from "node:path";
+import * as path9 from "node:path";
 import { execa as execa4 } from "execa";
 async function exactDir(p) {
   const s = await lstat5(p).catch(() => void 0);
   if (!s?.isDirectory() || s.isSymbolicLink()) throw new Error("PROJECT_ROOT_INVALID");
-  return path10.resolve(p);
+  return path9.resolve(p);
 }
 async function exactFile(p) {
   const s = await lstat5(p).catch(() => void 0);
@@ -1992,16 +1967,17 @@ async function exactFile(p) {
 }
 async function runOracle(options) {
   const root = await exactDir(options.projectRoot);
-  const mission = path10.resolve(options.missionPath);
-  if (!path10.relative(root, mission) || path10.relative(root, mission).startsWith("..")) throw new Error("MISSION_ROOT_MISMATCH");
+  const mission = path9.resolve(options.missionPath);
+  if (!path9.relative(root, mission) || path9.relative(root, mission).startsWith("..")) throw new Error("MISSION_ROOT_MISMATCH");
   const bytes = await exactFile(mission);
   const runId = options.runId ?? `run-${randomUUID5()}`;
-  const dir = path10.resolve(options.runRoot ?? path10.join(root, ".awgpt", runId));
+  const dir = path9.resolve(options.runRoot ?? path9.join(root, ".awgpt", runId));
   await mkdir7(dir, { recursive: true });
-  const statePath = path10.join(dir, "state.json");
+  const statePath = path9.join(dir, "state.json");
   const initial = { schema: "codex.chatgpt.oracle-run-state/v1", run_id: runId, project_root: root, mission_path: mission, mode: "browser", session_authority: "pre_submit", transport_status: "pending", task_outcome: "pending" };
   const lock4 = new LockManager({ projectRoot: root });
   const release = await lock4.acquire();
+  let retainLock = false;
   try {
     await writeFile2(statePath, JSON.stringify(initial, null, 2) + "\n");
     if (options.devspace) {
@@ -2019,7 +1995,7 @@ async function runOracle(options) {
     const command = options.oracleCommand ?? ["oracle"];
     const args = [...command.slice(1), ...options.oracleArgs ?? [], "--project-root", root, "--mission", mission, "--run-id", runId];
     const child = execa4(command[0], args, { cwd: root, shell: false, reject: false, env: { ...process.env, ...options.oracleHome ? { ORACLE_HOME: options.oracleHome } : {} } });
-    const registry = new ProcessRegistry(path10.join(dir, "processes.json"));
+    const registry = new ProcessRegistry(path9.join(dir, "processes.json"));
     if (child.pid) await registry.upsert({ id: runId, pid: child.pid, command: command[0], args, cwd: root, project_root: root, run_id: runId, started_at: (/* @__PURE__ */ new Date()).toISOString(), state: "running" });
     const out = await child;
     if (child.pid) {
@@ -2028,8 +2004,8 @@ async function runOracle(options) {
     }
     const stdout = out.stdout ?? "";
     const stderr = out.stderr ?? "";
-    await writeFile2(path10.join(dir, "stdout.log"), stdout);
-    await writeFile2(path10.join(dir, "stderr.log"), stderr);
+    await writeFile2(path9.join(dir, "stdout.log"), stdout);
+    await writeFile2(path9.join(dir, "stderr.log"), stderr);
     let outcome = "pending";
     let authority = out.exitCode === 0 ? "terminal_observed" : "submitted_unknown";
     if (out.exitCode === 0) {
@@ -2039,22 +2015,23 @@ async function runOracle(options) {
         authority = "submitted_unknown";
       }
     }
-    if (out.exitCode === 0) await writeFile2(path10.join(dir, "output.md"), stdout);
-    const state = { ...initial, session_authority: authority, transport_status: out.exitCode === 0 ? "complete" : "failed", task_outcome: outcome, artifacts: { output: path10.join(dir, "output.md"), transcript: path10.join(dir, "transcript.md"), stdout: path10.join(dir, "stdout.log"), stderr: path10.join(dir, "stderr.log"), browser_temp: dir } };
+    if (out.exitCode === 0) await writeFile2(path9.join(dir, "output.md"), stdout);
+    retainLock = authority === "submitted_unknown" || authority === "live";
+    const state = { ...initial, session_authority: authority, transport_status: out.exitCode === 0 ? "complete" : "failed", task_outcome: outcome, artifacts: { output: path9.join(dir, "output.md"), transcript: path9.join(dir, "transcript.md"), stdout: path9.join(dir, "stdout.log"), stderr: path9.join(dir, "stderr.log"), browser_temp: dir } };
     await writeFile2(statePath, JSON.stringify(state, null, 2) + "\n");
     return { statePath, state };
   } finally {
-    await release();
+    if (!retainLock) await release();
   }
 }
 async function loadRunState(statePath) {
-  return OracleRunStateSchema.parse(JSON.parse(await readFile8(path10.resolve(statePath), "utf8")));
+  return OracleRunStateSchema.parse(JSON.parse(await readFile8(path9.resolve(statePath), "utf8")));
 }
 async function stopRecorded(statePath) {
   const state = await loadRunState(statePath);
   if (!["live", "submitted_unknown"].includes(state.session_authority)) throw new Error("STOP_UNSAFE_AUTHORITY");
-  const registry = new ProcessRegistry(path10.join(path10.dirname(path10.resolve(statePath)), "processes.json"));
-  const records = (await registry.list()).filter((r) => r.run_id === state.run_id && path10.resolve(r.project_root ?? "") === path10.resolve(state.project_root) && r.state === "running");
+  const registry = new ProcessRegistry(path9.join(path9.dirname(path9.resolve(statePath)), "processes.json"));
+  const records = (await registry.list()).filter((r) => r.run_id === state.run_id && path9.resolve(r.project_root ?? "") === path9.resolve(state.project_root) && r.state === "running");
   if (records.length !== 1) throw new Error("STOP_OWNERSHIP_AMBIGUOUS");
   await terminatePersistedProcess(records[0]);
 }
@@ -2062,7 +2039,7 @@ async function stopRecorded(statePath) {
 // src/core/forensics/no-submission.ts
 import { createHash as createHash6 } from "node:crypto";
 import { lstat as lstat6, readFile as readFile9, readdir as readdir4 } from "node:fs/promises";
-import * as path11 from "node:path";
+import * as path10 from "node:path";
 var PROMPT_NOT_OBSERVED = "Prompt did not appear in conversation before timeout (send may have failed)";
 var NO_LIVE_TAB = "No live ChatGPT tab matched session";
 var NO_RECOVERABLE_URL = "session metadata has no recoverable ChatGPT conversation URL";
@@ -2071,7 +2048,7 @@ function sha2562(bytes) {
   return createHash6("sha256").update(bytes).digest("hex");
 }
 async function exactRegularFile(candidate, expected) {
-  if (path11.resolve(candidate) !== path11.resolve(expected)) return void 0;
+  if (path10.resolve(candidate) !== path10.resolve(expected)) return void 0;
   try {
     const stat = await lstat6(candidate);
     if (!stat.isFile() || stat.isSymbolicLink()) return void 0;
@@ -2085,12 +2062,12 @@ function exactlyOne(text, pattern) {
   return matches.length === 1 ? matches[0][1] : void 0;
 }
 function isWithin(root, candidate) {
-  const relative5 = path11.relative(root, candidate);
-  return Boolean(relative5) && !relative5.startsWith("..") && !path11.isAbsolute(relative5);
+  const relative5 = path10.relative(root, candidate);
+  return Boolean(relative5) && !relative5.startsWith("..") && !path10.isAbsolute(relative5);
 }
 async function proveNoSubmission(statePath) {
-  const absoluteState = path11.resolve(statePath);
-  const runDir = path11.dirname(absoluteState);
+  const absoluteState = path10.resolve(statePath);
+  const runDir = path10.dirname(absoluteState);
   const stateStat = await lstat6(absoluteState).catch(() => void 0);
   if (!stateStat?.isFile() || stateStat.isSymbolicLink()) return void 0;
   let raw;
@@ -2109,14 +2086,14 @@ async function proveNoSubmission(statePath) {
   const conversationUrl = String(oracle.conversation_url ?? "").trim();
   if (!locator || conversationUrl) return void 0;
   const artifacts = state.artifacts ?? {};
-  const outputPath = String(artifacts.output ?? path11.join(runDir, "output.md"));
-  if (path11.resolve(outputPath) !== path11.join(runDir, "output.md")) return void 0;
+  const outputPath = String(artifacts.output ?? path10.join(runDir, "output.md"));
+  if (path10.resolve(outputPath) !== path10.join(runDir, "output.md")) return void 0;
   const outputStat = await lstat6(outputPath).catch(() => void 0);
   if (outputStat?.isSymbolicLink() || outputStat?.isFile() && outputStat.size > 0) return void 0;
   const stdoutPath = String(artifacts.stdout ?? "");
   const stderrPath = String(artifacts.stderr ?? "");
-  const stdout = await exactRegularFile(stdoutPath, path11.join(runDir, "stdout.log"));
-  const stderr = await exactRegularFile(stderrPath, path11.join(runDir, "stderr.log"));
+  const stdout = await exactRegularFile(stdoutPath, path10.join(runDir, "stdout.log"));
+  const stderr = await exactRegularFile(stderrPath, path10.join(runDir, "stderr.log"));
   if (!stdout || !stderr) return void 0;
   let stdoutText;
   try {
@@ -2130,7 +2107,7 @@ async function proveNoSubmission(statePath) {
   }
   const mission = state.mission;
   const transportPath = String(mission.transport_path ?? "");
-  const missionBytes = await exactRegularFile(transportPath, path11.join(runDir, "mission.md"));
+  const missionBytes = await exactRegularFile(transportPath, path10.join(runDir, "mission.md"));
   if (!missionBytes || sha2562(missionBytes) !== mission.sha256) return void 0;
   let missionText;
   try {
@@ -2153,24 +2130,24 @@ async function proveNoSubmission(statePath) {
   const receiptPath = exactlyOne(contract, /^Write the small UTF-8 stage receipt to: ([^\r\n]+)\r?$/gm);
   if (!workflowId || !attemptId || !inputHash || !exactRoot || !inputMission || !receiptPath) return void 0;
   if (attemptId !== state.run_id || state.parallel_parent_id !== sha2562(Buffer.from(workflowId))) return void 0;
-  const canonicalRoot = path11.resolve(state.project_root);
-  if (path11.resolve(exactRoot) !== canonicalRoot) return void 0;
+  const canonicalRoot = path10.resolve(state.project_root);
+  if (path10.resolve(exactRoot) !== canonicalRoot) return void 0;
   const rootStat = await lstat6(canonicalRoot).catch(() => void 0);
   if (!rootStat?.isDirectory() || rootStat.isSymbolicLink()) return void 0;
-  const sourceMissionPath = path11.resolve(String(mission.path));
-  const inputMissionPath = path11.resolve(inputMission);
-  const receipt = path11.resolve(receiptPath);
+  const sourceMissionPath = path10.resolve(String(mission.path));
+  const inputMissionPath = path10.resolve(inputMission);
+  const receipt = path10.resolve(receiptPath);
   if (!isWithin(canonicalRoot, sourceMissionPath) || !isWithin(canonicalRoot, inputMissionPath) || !isWithin(canonicalRoot, receipt)) return void 0;
   const sourceMission = await exactRegularFile(sourceMissionPath, sourceMissionPath);
   const inputBytes = await exactRegularFile(inputMissionPath, inputMissionPath);
   if (!sourceMission || !inputBytes || !sourceMission.equals(missionBytes) || sha2562(inputBytes) !== inputHash) return void 0;
-  if (receipt !== path11.join(path11.dirname(sourceMissionPath), "stage-result.json")) return void 0;
+  if (receipt !== path10.join(path10.dirname(sourceMissionPath), "stage-result.json")) return void 0;
   const names = await readdir4(runDir);
   const recoveryEvidence = [];
   for (const stdoutName of names.filter((name) => /^recovery-.+-stdout\.log$/.test(name)).sort()) {
     const stderrName = stdoutName.replace(/-stdout\.log$/, "-stderr.log");
-    const recoveryStdout = await exactRegularFile(path11.join(runDir, stdoutName), path11.join(runDir, stdoutName));
-    const recoveryStderr = await exactRegularFile(path11.join(runDir, stderrName), path11.join(runDir, stderrName));
+    const recoveryStdout = await exactRegularFile(path10.join(runDir, stdoutName), path10.join(runDir, stdoutName));
+    const recoveryStderr = await exactRegularFile(path10.join(runDir, stderrName), path10.join(runDir, stderrName));
     if (!recoveryStdout || !recoveryStderr) return void 0;
     let combined;
     try {
@@ -2203,6 +2180,24 @@ async function proveNoSubmission(statePath) {
   };
 }
 
+// src/core/devspace/http-client.ts
+import { randomUUID as randomUUID6 } from "node:crypto";
+function createHttpDevSpaceClient(endpoint, fetcher = fetch) {
+  const url = new URL(endpoint).toString();
+  async function call(name, args) {
+    const response = await fetcher(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID6(), method: "tools/call", params: { name, arguments: args } })
+    });
+    if (!response.ok) throw new Error(`DEVSPACE_HTTP_${response.status}`);
+    const payload = await response.json();
+    if (payload.error) throw new Error(payload.error.message ?? "DEVSPACE_RPC_ERROR");
+    return payload.result;
+  }
+  return { open_workspace: (args) => call("open_workspace", args), list_directory: (args) => call("ls", args) };
+}
+
 // src/cli/index.ts
 function createCLI() {
   const program2 = new Command();
@@ -2230,7 +2225,7 @@ function createCLI() {
     if (report.status === "FAIL") process.exitCode = 1;
     else if (report.status === "BLOCKED") process.exitCode = 2;
   });
-  program2.command("auth-preflight").description("Validate ChatGPT authentication and required composer DOM without submitting").requiredOption("--copy-profile <path>", "manual-login profile seed").option("--oracle-home <path>", "isolated Oracle home", path12.join(os4.homedir(), ".oracle")).option("--chrome-path <path>", "Chrome executable override").action(async (options) => {
+  program2.command("auth-preflight").description("Validate ChatGPT authentication and required composer DOM without submitting").requiredOption("--copy-profile <path>", "manual-login profile seed").option("--oracle-home <path>", "isolated Oracle home", path11.join(os4.homedir(), ".oracle")).option("--chrome-path <path>", "Chrome executable override").action(async (options) => {
     const manager = new ProfileManager({ sourceProfilePath: options.copyProfile }, options.oracleHome);
     const id = `preflight-${Date.now()}`;
     const copied = await manager.createSession(id);
@@ -2242,7 +2237,7 @@ function createCLI() {
       await manager.removeProfile(id);
     }
   });
-  program2.command("auth-recover").description("Recover the isolated login from ChatGPT cookies in the main Chrome profile").requiredOption("--copy-profile <path>", "manual-login profile seed to repair").option("--chrome-user-data <path>", "main Chrome user-data root").option("--chrome-profile <name>", "Chrome profile directory, such as Default or Profile 1").option("--oracle-home <path>", "isolated Oracle home", path12.join(os4.homedir(), ".oracle")).option("--chrome-path <path>", "Chrome executable override").action(async (options) => {
+  program2.command("auth-recover").description("Recover the isolated login from ChatGPT cookies in the main Chrome profile").requiredOption("--copy-profile <path>", "manual-login profile seed to repair").option("--chrome-user-data <path>", "main Chrome user-data root").option("--chrome-profile <name>", "Chrome profile directory, such as Default or Profile 1").option("--oracle-home <path>", "isolated Oracle home", path11.join(os4.homedir(), ".oracle")).option("--chrome-path <path>", "Chrome executable override").action(async (options) => {
     try {
       const result = await recoverChatGptLogin({
         seedPath: options.copyProfile,
@@ -2267,19 +2262,25 @@ function createCLI() {
     }
   });
   for (const action of ["install", "update"]) {
-    program2.command(action).description(`${action} repository-managed Agent Web GPT files with a receipt`).option("--source <path>", "repository source root", process.cwd()).option("--agent-home <path>", "installation root", path12.join(os4.homedir(), ".codex")).action(async (options) => {
+    program2.command(action).description(`${action} repository-managed Agent Web GPT files with a receipt`).option("--source <path>", "repository source root", process.cwd()).option("--agent-home <path>", "installation root", path11.join(os4.homedir(), ".codex")).action(async (options) => {
       const result = await installOrUpdate(action, options.source, options.agentHome);
       console.log(JSON.stringify(result, null, 2));
     });
   }
-  program2.command("rollback").description("Rollback the latest receipt without overwriting modified files").option("--agent-home <path>", "installation root", path12.join(os4.homedir(), ".codex")).option("--receipt <path>", "specific owned receipt").action(async (options) => {
+  program2.command("rollback").description("Rollback the latest receipt without overwriting modified files").option("--agent-home <path>", "installation root", path11.join(os4.homedir(), ".codex")).option("--receipt <path>", "specific owned receipt").action(async (options) => {
     const result = await rollbackInstall(options.agentHome, options.receipt);
     console.log(JSON.stringify(result, null, 2));
     if (!result.ok) process.exitCode = 2;
   });
-  program2.command("run").description("Run Oracle workflow").requiredOption("--project-root <path>").requiredOption("--mission <path>").option("--run-root <path>").option("--manifest <path>").option("--oracle-command <path>").option("--oracle-arg <value...>").option("--oracle-home <path>").action(async (options) => {
+  program2.command("run").description("Run Oracle workflow").requiredOption("--project-root <path>").requiredOption("--mission <path>").option("--run-root <path>").option("--manifest <path>").option("--oracle-command <path>").option("--oracle-arg <value...>").option("--oracle-home <path>").option("--devspace-url <url>", "DevSpace MCP endpoint", "http://127.0.0.1:7676/mcp").action(async (options) => {
     try {
-      console.log(JSON.stringify(await runOracle({ projectRoot: options.projectRoot, missionPath: options.mission, runRoot: options.runRoot, manifestPath: options.manifest, oracleCommand: options.oracleCommand ? [options.oracleCommand] : void 0, oracleArgs: options.oracleArg, oracleHome: options.oracleHome }), null, 2));
+      const client = createHttpDevSpaceClient(options.devspaceUrl);
+      const devspace = { qualify: async (root) => {
+        const { qualifyExactProjectRoot: qualifyExactProjectRoot2 } = await import("./qualification-L3L7BCA4.js");
+        const result = await qualifyExactProjectRoot2(root, client);
+        return { ok: result.ok, reason: result.code };
+      } };
+      console.log(JSON.stringify(await runOracle({ projectRoot: options.projectRoot, missionPath: options.mission, runRoot: options.runRoot, manifestPath: options.manifest, oracleCommand: options.oracleCommand ? [options.oracleCommand] : void 0, oracleArgs: options.oracleArg, oracleHome: options.oracleHome, devspace }), null, 2));
     } catch (e) {
       console.error(e instanceof Error ? e.message : e);
       process.exitCode = 1;
@@ -2314,13 +2315,13 @@ function createCLI() {
 // src/core/state/store.ts
 import writeFileAtomic6 from "write-file-atomic";
 import { mkdir as mkdir8, readFile as readFile10 } from "node:fs/promises";
-import { dirname as dirname7, resolve as resolve11 } from "node:path";
+import { dirname as dirname7, resolve as resolve10 } from "node:path";
 import * as lockFile3 from "proper-lockfile";
 var IMMUTABLE_FIELDS = ["run_id", "project_root", "mission_path"];
 var StateStore = class {
   statePath;
   constructor(statePath) {
-    this.statePath = resolve11(statePath);
+    this.statePath = resolve10(statePath);
   }
   async write(data, options = {}) {
     const validated = PersistentStateSchema.parse(data);
@@ -2516,7 +2517,7 @@ var StageGate = class {
 
 // src/core/orchestrator/gate-runner.ts
 import { createHash as createHash7 } from "node:crypto";
-import * as path13 from "node:path";
+import * as path12 from "node:path";
 import { lstat as lstat7, realpath } from "node:fs/promises";
 import { execa as execa5 } from "execa";
 function sha2563(value) {
@@ -2530,7 +2531,7 @@ async function runLocalGate(request) {
   if (!Array.isArray(request.argv) || request.argv.length === 0 || request.argv.some((item) => typeof item !== "string")) {
     throw new Error("GATE_ARGV_INVALID");
   }
-  const suppliedRoot = path13.resolve(request.projectRoot);
+  const suppliedRoot = path12.resolve(request.projectRoot);
   let cwd;
   try {
     const metadata = await lstat7(suppliedRoot);
@@ -2588,7 +2589,7 @@ var runGate = runLocalGate;
 import { execa as execa6 } from "execa";
 import { z as z8 } from "zod";
 import crypto3 from "crypto";
-import * as path14 from "node:path";
+import * as path13 from "node:path";
 var ProcessState = z8.enum(["running", "exited", "signaled", "cleaned"]);
 var CAUTION_AUDIT_THRESHOLD_MS = 48e5;
 var ProcessSupervisor = class {
@@ -2645,7 +2646,7 @@ var ProcessSupervisor = class {
         args: config.args,
         cwd: config.cwd ?? process.cwd(),
         started_at: processInfo.startedAt.toISOString(),
-        project_root: config.projectRoot ? path14.resolve(config.projectRoot) : void 0,
+        project_root: config.projectRoot ? path13.resolve(config.projectRoot) : void 0,
         state: "running",
         run_id: config.runId,
         exact_slug: config.exactSlug
@@ -2675,7 +2676,7 @@ var ProcessSupervisor = class {
         }).catch(() => {
           exited = true;
         }),
-        new Promise((resolve14) => setTimeout(resolve14, 5e3))
+        new Promise((resolve13) => setTimeout(resolve13, 5e3))
       ]);
     }
     if (!gracefulSignalAccepted || !exited || this.processGroupIsAlive(state.pid)) {
@@ -2828,6 +2829,7 @@ export {
   checkProfile,
   comprehensiveConfig,
   createCLI,
+  createHttpDevSpaceClient,
   createLockAdapter,
   defaultChromeUserDataRoot,
   diagnoseIncident,
