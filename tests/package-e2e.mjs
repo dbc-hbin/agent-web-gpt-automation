@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 const root=process.cwd(), temp=mkdtempSync(join(tmpdir(),'awgpt-package-e2e-')); let cli,server;
-const run=(a,o={})=>execFileSync(process.execPath,[cli,...a],{cwd:temp,encoding:'utf8',...o});
+const run=(a,o={})=>execFileSync(process.execPath,[cli,...a],{cwd:temp,encoding:'utf8',timeout:10000,...o});
 const listen=s=>new Promise(r=>s.listen(0,'127.0.0.1',r));
 try {
  const packed=execFileSync('npm',['pack','--json','--pack-destination',temp],{cwd:root,encoding:'utf8'}); const p=JSON.parse(packed.slice(packed.indexOf('[')))[0];
