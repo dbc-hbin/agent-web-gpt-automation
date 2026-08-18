@@ -50,6 +50,20 @@ export async function planExactRecovery(
 ): Promise<ExactRecoveryPlan> {
   const absolute = path.resolve(statePath);
   const state = OracleSessionStateSchema.parse(JSON.parse(await readFile(absolute, 'utf8')));
+  if (['settled','terminal_observed'].includes(state.session_authority) || state.terminal_harvested === true) throw new Error('RECOVERY_ALREADY_SETTLED');
+  const mission = (state.mission ?? {}) as Record<string, unknown>;
+  if (typeof mission.path !== 'string' || typeof mission.sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(mission.sha256)) throw new Error('RECOVERY_MISSION_INVALID');
+  const root = await realpath(path.resolve(state.project_root)).catch(() => { throw new Error('RECOVERY_PROJECT_ROOT_INVALID'); });
+  const rootStat = await lstat(path.resolve(state.project_root));
+  if (rootStat.isSymbolicLink()) throw new Error('RECOVERY_PROJECT_ROOT_INVALID');
+  const missionAbs = path.resolve(mission.path);
+  const ms = await lstat(missionAbs).catch(() => undefined);
+  if (!ms?.isFile() || ms.isSymbolicLink()) throw new Error('RECOVERY_MISSION_INVALID');
+  const missionReal = await realpath(missionAbs);
+  const relMission = path.relative(root, missionReal);
+  if (relMission.startsWith('..') || path.isAbsolute(relMission)) throw new Error('RECOVERY_MISSION_ROOT_MISMATCH');
+  const currentSha = createHash('sha256').update(await readFile(missionReal)).digest('hex');
+  if (currentSha !== mission.sha256) throw new Error('RECOVERY_MISSION_MUTATED');
   const oracle = (state.oracle ?? {}) as Record<string, unknown>;
   const locator = String(oracle.session_locator ?? oracle.slug ?? '').trim();
   const storedCommand = Array.isArray(oracle.command)
@@ -66,7 +80,7 @@ export async function planExactRecovery(
   }
   return {
     run_id: state.run_id,
-    project_root: path.resolve(state.project_root),
+    project_root: root,
     locator,
     action,
     argv: recoveryArgv(command, locator, action, outputPath),
@@ -86,6 +100,7 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
 }> {
   const preRaw = JSON.parse(await readFile(plan.state_path, 'utf8')) as Record<string, unknown>;
   const pre = OracleSessionStateSchema.parse(preRaw);
+  if (['settled','terminal_observed'].includes(pre.session_authority) || pre.terminal_harvested === true) throw new Error('RECOVERY_ALREADY_SETTLED');
   const mission = (pre.mission ?? {}) as Record<string, unknown>;
   if (typeof mission.path === 'string' && typeof mission.sha256 === 'string') {
     const root = await realpath(plan.project_root);
@@ -95,6 +110,7 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
     const currentSha = createHash('sha256').update(await readFile(missionPath)).digest('hex');
     if (currentSha !== mission.sha256) throw new Error('RECOVERY_MISSION_MUTATED');
   }
+  else throw new Error('RECOVERY_MISSION_INVALID');
   const runDir = path.dirname(plan.output_path);
   await mkdir(runDir, { recursive: true });
   const stdoutPath = path.join(runDir, `recovery-${plan.action}-stdout.log`);
@@ -121,7 +137,8 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
   const terminalStates = new Set(['complete', 'completed', 'done', 'finished', 'failed', 'error', 'cancelled', 'canceled']);
   const raw = JSON.parse(await readFile(plan.state_path, 'utf8')) as Record<string, unknown>;
   const before = OracleSessionStateSchema.parse(raw);
-  if (before.run_id !== plan.run_id || path.resolve(before.project_root) !== plan.project_root) {
+  const beforeRoot = await realpath(path.resolve(before.project_root)).catch(() => path.resolve(before.project_root));
+  if (before.run_id !== plan.run_id || beforeRoot !== plan.project_root) {
     throw new Error('RECOVERY_STATE_IDENTITY_MUTATED');
   }
   const oracle = { ...((raw.oracle ?? {}) as Record<string, unknown>) };

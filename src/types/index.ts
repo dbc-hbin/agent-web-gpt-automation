@@ -144,6 +144,7 @@ export const WorkflowRunStateSchema = z.object({
   stage: WorkflowStage,
   session_authority: SessionAuthority,
   task_outcome: TaskOutcome,
+  task_outcome_contract: z.enum(['legacy','v1']).optional(),
   revision: z.number().int().nonnegative(),
   receipts: z.array(WorkflowReceiptSchema),
 }).strict();
@@ -265,6 +266,7 @@ export const OracleRunStateSchema = z.object({
   session_authority: SessionAuthority,
   transport_status: z.enum(['complete', 'failed', 'pending']),
   task_outcome: TaskOutcome,
+  task_outcome_contract: z.enum(['legacy','v1']).optional(),
   process: z.object({ pid: z.number().int().positive(), command: z.string(), args: z.array(z.string()), cwd: z.string().optional(), started_at: z.string().datetime().optional() }).strict().optional(),
   oracle: z.object({
     resolved_version: z.string(),
@@ -294,6 +296,7 @@ export const OracleSessionStateSchema = z.object({
   ]),
   transport_status: z.string().min(1),
   task_outcome: z.string().min(1),
+  task_outcome_contract: z.enum(['legacy','v1']).optional(),
   terminal_harvested: z.boolean().optional(),
   mission: z.object({
     path: z.string().min(1),

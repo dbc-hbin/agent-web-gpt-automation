@@ -39,7 +39,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   const oracleArgs = manifest?.oracle_args ?? options.oracleArgs ?? [];
   const versionCheck = await execa(command[0], [...command.slice(1), ...oracleArgs, '--version'], { cwd: root, shell: false, reject: false });
   const version = `${versionCheck.stdout}\n${versionCheck.stderr}`.trim();
-  if (versionCheck.exitCode !== 0 || !/(^|\n|\s)v?0\.17\.1(?:\s|$)/.test(version) || /0\.17\.1-(?:beta|rc|alpha)/i.test(version)) throw new Error('ORACLE_VERSION_UNSUPPORTED');
+  if (versionCheck.exitCode !== 0 || !/^0\.17\.1$/.test(version)) throw new Error('ORACLE_VERSION_UNSUPPORTED');
   const outputPath = path.join(dir,'output.md');
   if (manifest?.copy_profile) { const s=await lstat(manifest.copy_profile).catch(()=>undefined); if (!s || s.isSymbolicLink() || !s.isDirectory()) throw new Error('COPY_PROFILE_INVALID'); }
   if (manifest?.attachments) for (const attachment of manifest.attachments) { const s=await lstat(attachment).catch(()=>undefined); if (!s || s.isSymbolicLink() || !s.isFile()) throw new Error('ATTACHMENT_INVALID'); }
@@ -64,7 +64,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
       ...(manifest?.model ? ['--model',manifest.model] : []),
       ...(manifest?.model_strategy ? ['--browser-model-strategy',manifest.model_strategy] : []),
       ...(manifest?.research ? ['--browser-research',manifest.research] : []), ...(manifest?.archive ? ['--browser-archive',manifest.archive] : []),
-      ...(manifest?.attachments ?? []).flatMap((a:string)=>['--attachment',a]), ...(manifest?.attachments ? ['--file', ...manifest.attachments] : []),
+      ...(manifest?.attachments ? ['--browser-attachments', ...manifest.attachments.flatMap((a:string)=>['--file',a])] : []),
       ...(manifest?.copy_profile ? ['--copy-profile',manifest.copy_profile] : []), ...oracleArgs];
     const child=execa(command[0],args,{cwd:root,shell:false,reject:false,env:{...process.env, ...(options.oracleHome?{ORACLE_HOME:options.oracleHome}:{})}});
     const startedAt = new Date().toISOString();
@@ -81,7 +81,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
     await writeFile(path.join(dir,'transcript.md'), stdout);
     if (authority === 'terminal_observed' && outcome !== 'pending') authority = 'settled';
     retainLock = ['submitted_unknown','live','terminal_observed'].includes(authority);
-    const state: OracleRunState={...initial,session_authority:authority,transport_status: (authority === 'settled' || authority === 'terminal_observed') ? 'complete' : out.exitCode===0?'pending':'failed',task_outcome:outcome,process: child.pid ? {pid:child.pid,command:command[0],args} : undefined,artifacts:{output:outputPath,transcript:path.join(dir,'transcript.md'),stdout:path.join(dir,'stdout.log'),stderr:path.join(dir,'stderr.log'),browser_temp:dir}};
+    const state: OracleRunState={...initial,task_outcome_contract:'v1',session_authority:authority,transport_status: (authority === 'settled' || authority === 'terminal_observed') ? 'complete' : out.exitCode===0?'pending':'failed',task_outcome:outcome,process: child.pid ? {pid:child.pid,command:command[0],args} : undefined,artifacts:{output:outputPath,transcript:path.join(dir,'transcript.md'),stdout:path.join(dir,'stdout.log'),stderr:path.join(dir,'stderr.log'),browser_temp:dir}};
     const settled = authority === 'settled';
     const outputSha = sha(durable); const receipt = { receipt_id: randomUUID(), run_id: runId, stage:'plan' as const, status: settled?'completed' as const:'failed' as const, input_sha256: sha(bytes), output_sha256: outputSha, previous_receipt_sha256:null, next_stage: settled?'complete' as const:'attention_required' as const, prologue:{project_root:root,mission_sha256:sha(bytes),profile:'default' as const,semantic_revision:0}, external_actions:[{kind:'oracle' as const,status: settled?'completed' as const:'failed' as const}], recovery:{session_authority:authority,attempt:0,exact_slug:slug} };
     await new StateStore(workflowPath).write({...wfBase, stage:receipt.next_stage, session_authority:authority, task_outcome:outcome, receipts:[receipt]}, { explicitSettle: settled });

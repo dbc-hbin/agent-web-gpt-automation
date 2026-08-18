@@ -141,6 +141,7 @@ var WorkflowRunStateSchema = z.object({
   stage: WorkflowStage,
   session_authority: SessionAuthority,
   task_outcome: TaskOutcome,
+  task_outcome_contract: z.enum(["legacy", "v1"]).optional(),
   revision: z.number().int().nonnegative(),
   receipts: z.array(WorkflowReceiptSchema)
 }).strict();
@@ -238,6 +239,7 @@ var OracleRunStateSchema = z.object({
   session_authority: SessionAuthority,
   transport_status: z.enum(["complete", "failed", "pending"]),
   task_outcome: TaskOutcome,
+  task_outcome_contract: z.enum(["legacy", "v1"]).optional(),
   process: z.object({ pid: z.number().int().positive(), command: z.string(), args: z.array(z.string()), cwd: z.string().optional(), started_at: z.string().datetime().optional() }).strict().optional(),
   oracle: z.object({
     resolved_version: z.string(),
@@ -270,6 +272,7 @@ var OracleSessionStateSchema = z.object({
   ]),
   transport_status: z.string().min(1),
   task_outcome: z.string().min(1),
+  task_outcome_contract: z.enum(["legacy", "v1"]).optional(),
   terminal_harvested: z.boolean().optional(),
   mission: z.object({
     path: z.string().min(1),
@@ -695,6 +698,22 @@ function recoveryArgv(command, locator, action, outputPath) {
 async function planExactRecovery(statePath, action = "live", oracleCommand) {
   const absolute = path3.resolve(statePath);
   const state = OracleSessionStateSchema.parse(JSON.parse(await readFile4(absolute, "utf8")));
+  if (["settled", "terminal_observed"].includes(state.session_authority) || state.terminal_harvested === true) throw new Error("RECOVERY_ALREADY_SETTLED");
+  const mission = state.mission ?? {};
+  if (typeof mission.path !== "string" || typeof mission.sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(mission.sha256)) throw new Error("RECOVERY_MISSION_INVALID");
+  const root = await realpath(path3.resolve(state.project_root)).catch(() => {
+    throw new Error("RECOVERY_PROJECT_ROOT_INVALID");
+  });
+  const rootStat = await lstat(path3.resolve(state.project_root));
+  if (rootStat.isSymbolicLink()) throw new Error("RECOVERY_PROJECT_ROOT_INVALID");
+  const missionAbs = path3.resolve(mission.path);
+  const ms = await lstat(missionAbs).catch(() => void 0);
+  if (!ms?.isFile() || ms.isSymbolicLink()) throw new Error("RECOVERY_MISSION_INVALID");
+  const missionReal = await realpath(missionAbs);
+  const relMission = path3.relative(root, missionReal);
+  if (relMission.startsWith("..") || path3.isAbsolute(relMission)) throw new Error("RECOVERY_MISSION_ROOT_MISMATCH");
+  const currentSha = createHash3("sha256").update(await readFile4(missionReal)).digest("hex");
+  if (currentSha !== mission.sha256) throw new Error("RECOVERY_MISSION_MUTATED");
   const oracle = state.oracle ?? {};
   const locator = String(oracle.session_locator ?? oracle.slug ?? "").trim();
   const storedCommand = Array.isArray(oracle.command) ? oracle.command.filter((part) => typeof part === "string" && part.length > 0) : [];
@@ -709,7 +728,7 @@ async function planExactRecovery(statePath, action = "live", oracleCommand) {
   }
   return {
     run_id: state.run_id,
-    project_root: path3.resolve(state.project_root),
+    project_root: root,
     locator,
     action,
     argv: recoveryArgv(command, locator, action, outputPath),
@@ -721,6 +740,7 @@ async function planExactRecovery(statePath, action = "live", oracleCommand) {
 async function executeExactRecovery(plan) {
   const preRaw = JSON.parse(await readFile4(plan.state_path, "utf8"));
   const pre = OracleSessionStateSchema.parse(preRaw);
+  if (["settled", "terminal_observed"].includes(pre.session_authority) || pre.terminal_harvested === true) throw new Error("RECOVERY_ALREADY_SETTLED");
   const mission = pre.mission ?? {};
   if (typeof mission.path === "string" && typeof mission.sha256 === "string") {
     const root = await realpath(plan.project_root);
@@ -731,7 +751,7 @@ async function executeExactRecovery(plan) {
     if (rel.startsWith("..") || path3.isAbsolute(rel)) throw new Error("RECOVERY_MISSION_ROOT_MISMATCH");
     const currentSha = createHash3("sha256").update(await readFile4(missionPath)).digest("hex");
     if (currentSha !== mission.sha256) throw new Error("RECOVERY_MISSION_MUTATED");
-  }
+  } else throw new Error("RECOVERY_MISSION_INVALID");
   const runDir = path3.dirname(plan.output_path);
   await mkdir3(runDir, { recursive: true });
   const stdoutPath = path3.join(runDir, `recovery-${plan.action}-stdout.log`);
@@ -758,7 +778,8 @@ async function executeExactRecovery(plan) {
   const terminalStates = /* @__PURE__ */ new Set(["complete", "completed", "done", "finished", "failed", "error", "cancelled", "canceled"]);
   const raw = JSON.parse(await readFile4(plan.state_path, "utf8"));
   const before = OracleSessionStateSchema.parse(raw);
-  if (before.run_id !== plan.run_id || path3.resolve(before.project_root) !== plan.project_root) {
+  const beforeRoot = await realpath(path3.resolve(before.project_root)).catch(() => path3.resolve(before.project_root));
+  if (before.run_id !== plan.run_id || beforeRoot !== plan.project_root) {
     throw new Error("RECOVERY_STATE_IDENTITY_MUTATED");
   }
   const oracle = { ...raw.oracle ?? {} };
@@ -2178,7 +2199,7 @@ async function runOracle(options) {
   const versionCheck = await execa4(command[0], [...command.slice(1), ...oracleArgs, "--version"], { cwd: root, shell: false, reject: false });
   const version = `${versionCheck.stdout}
 ${versionCheck.stderr}`.trim();
-  if (versionCheck.exitCode !== 0 || !/(^|\n|\s)v?0\.17\.1(?:\s|$)/.test(version) || /0\.17\.1-(?:beta|rc|alpha)/i.test(version)) throw new Error("ORACLE_VERSION_UNSUPPORTED");
+  if (versionCheck.exitCode !== 0 || !/^0\.17\.1$/.test(version)) throw new Error("ORACLE_VERSION_UNSUPPORTED");
   const outputPath = path9.join(dir, "output.md");
   if (manifest?.copy_profile) {
     const s = await lstat5(manifest.copy_profile).catch(() => void 0);
@@ -2226,8 +2247,7 @@ ${versionCheck.stderr}`.trim();
       ...manifest?.model_strategy ? ["--browser-model-strategy", manifest.model_strategy] : [],
       ...manifest?.research ? ["--browser-research", manifest.research] : [],
       ...manifest?.archive ? ["--browser-archive", manifest.archive] : [],
-      ...(manifest?.attachments ?? []).flatMap((a) => ["--attachment", a]),
-      ...manifest?.attachments ? ["--file", ...manifest.attachments] : [],
+      ...manifest?.attachments ? ["--browser-attachments", ...manifest.attachments.flatMap((a) => ["--file", a])] : [],
       ...manifest?.copy_profile ? ["--copy-profile", manifest.copy_profile] : [],
       ...oracleArgs
     ];
@@ -2259,7 +2279,7 @@ ${versionCheck.stderr}`.trim();
     await writeFile2(path9.join(dir, "transcript.md"), stdout);
     if (authority === "terminal_observed" && outcome !== "pending") authority = "settled";
     retainLock = ["submitted_unknown", "live", "terminal_observed"].includes(authority);
-    const state = { ...initial, session_authority: authority, transport_status: authority === "settled" || authority === "terminal_observed" ? "complete" : out.exitCode === 0 ? "pending" : "failed", task_outcome: outcome, process: child.pid ? { pid: child.pid, command: command[0], args } : void 0, artifacts: { output: outputPath, transcript: path9.join(dir, "transcript.md"), stdout: path9.join(dir, "stdout.log"), stderr: path9.join(dir, "stderr.log"), browser_temp: dir } };
+    const state = { ...initial, task_outcome_contract: "v1", session_authority: authority, transport_status: authority === "settled" || authority === "terminal_observed" ? "complete" : out.exitCode === 0 ? "pending" : "failed", task_outcome: outcome, process: child.pid ? { pid: child.pid, command: command[0], args } : void 0, artifacts: { output: outputPath, transcript: path9.join(dir, "transcript.md"), stdout: path9.join(dir, "stdout.log"), stderr: path9.join(dir, "stderr.log"), browser_temp: dir } };
     const settled = authority === "settled";
     const outputSha = sha(durable);
     const receipt = { receipt_id: randomUUID6(), run_id: runId, stage: "plan", status: settled ? "completed" : "failed", input_sha256: sha(bytes), output_sha256: outputSha, previous_receipt_sha256: null, next_stage: settled ? "complete" : "attention_required", prologue: { project_root: root, mission_sha256: sha(bytes), profile: "default", semantic_revision: 0 }, external_actions: [{ kind: "oracle", status: settled ? "completed" : "failed" }], recovery: { session_authority: authority, attempt: 0, exact_slug: slug } };
