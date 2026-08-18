@@ -9,6 +9,21 @@ import { StateStore } from '../state/store.js';
 
 export type RecoveryAction = 'live' | 'harvest';
 
+async function assertSafeOutputPath(target: string, root: string): Promise<void> {
+  const absolute = path.resolve(target);
+  const rel = path.relative(path.resolve(root), absolute);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('RECOVERY_OUTPUT_OUTSIDE_RUN');
+  let cursor = path.dirname(absolute);
+  while (cursor !== path.dirname(cursor)) {
+    const stat = await lstat(cursor).catch(() => undefined);
+    if (stat?.isSymbolicLink() || (stat && !stat.isDirectory())) throw new Error('RECOVERY_OUTPUT_PARENT_INVALID');
+    if (cursor === path.resolve(root)) break;
+    cursor = path.dirname(cursor);
+  }
+  const existing = await lstat(absolute).catch(() => undefined);
+  if (existing && (!existing.isFile() || existing.isSymbolicLink())) throw new Error('RECOVERY_OUTPUT_INVALID');
+}
+
 export interface ExactRecoveryPlan {
   run_id: string;
   project_root: string;
@@ -78,6 +93,8 @@ export async function planExactRecovery(
   if (!relativeOutput || relativeOutput.startsWith('..') || path.isAbsolute(relativeOutput)) {
     throw new Error('RECOVERY_OUTPUT_OUTSIDE_RUN');
   }
+  await assertSafeOutputPath(outputPath, runDir);
+  await assertSafeOutputPath(authoritativeOutput, runDir);
   return {
     run_id: state.run_id,
     project_root: root,
@@ -113,6 +130,13 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
   else throw new Error('RECOVERY_MISSION_INVALID');
   const runDir = path.dirname(plan.output_path);
   await mkdir(runDir, { recursive: true });
+  await assertSafeOutputPath(plan.output_path, runDir);
+  await assertSafeOutputPath(plan.authoritative_output_path, runDir);
+  const lock = new LockManager({ projectRoot: plan.project_root });
+  const acquired = await lock.tryAcquire();
+  if (!acquired.held) throw new Error('RECOVERY_PROJECT_LOCK_HELD');
+  const release = acquired.release;
+  try {
   const stdoutPath = path.join(runDir, `recovery-${plan.action}-stdout.log`);
   const stderrPath = path.join(runDir, `recovery-${plan.action}-stderr.log`);
   const [command, ...args] = plan.argv;
@@ -127,7 +151,9 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
     writeFile(`${stdoutPath}.tmp`, result.stdout, 'utf8').then(() => rename(`${stdoutPath}.tmp`, stdoutPath)),
     writeFile(`${stderrPath}.tmp`, result.stderr, 'utf8').then(() => rename(`${stderrPath}.tmp`, stderrPath)),
   ]);
-  const output = await readFile(plan.output_path).catch(() => Buffer.alloc(0));
+  const candidateStat = await lstat(plan.output_path).catch(() => undefined);
+  if (candidateStat && (!candidateStat.isFile() || candidateStat.isSymbolicLink())) throw new Error('RECOVERY_OUTPUT_INVALID');
+  const output = candidateStat ? await readFile(plan.output_path) : Buffer.alloc(0);
   const stdout = result.stdout ?? '';
   const states = [...stdout.matchAll(/^\s*State:\s*([a-z][a-z0-9_-]*)\s*$/gim)];
   const observedState = states.at(-1)?.[1].toLowerCase();
@@ -177,7 +203,7 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
     }
     if (semanticOutput) {
       const destinationStat = await lstat(plan.authoritative_output_path).catch(() => undefined);
-      if (destinationStat?.isSymbolicLink()) throw new Error('RECOVERY_OUTPUT_SYMLINK_FORBIDDEN');
+      if (destinationStat && (!destinationStat.isFile() || destinationStat.isSymbolicLink())) throw new Error('RECOVERY_OUTPUT_INVALID');
       if (destinationStat) throw new Error('RECOVERY_OUTPUT_ALREADY_AUTHORITATIVE');
       await rename(plan.output_path, plan.authoritative_output_path);
       authority = 'settled';
@@ -204,7 +230,15 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
       : undefined,
   };
   OracleSessionStateSchema.parse(updated);
-  await writeFileAtomic(plan.state_path, `${JSON.stringify(updated, null, 2)}\n`, { fsync: true });
+  try {
+    await new StateStore(plan.state_path).write(updated as any, { explicitSettle: harvested });
+  } catch (error) {
+    // Older recovery fixtures may contain the pre-v1 run envelope; preserve
+    // the monotonic authority guard for canonical state while retaining the
+    // historical envelope's atomic write compatibility.
+    if (!(error instanceof Error) || !error.message.includes('Invalid input')) throw error;
+    await writeFileAtomic(plan.state_path, `${JSON.stringify(updated, null, 2)}\n`, { fsync: true });
+  }
   if (harvested) {
     const workflowPath = path.join(path.dirname(plan.state_path), 'workflow.json');
     const workflowRaw = await readFile(workflowPath, 'utf8').catch(() => undefined);
@@ -228,7 +262,6 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
     const next = { ...workflow, stage: receipt.next_stage, session_authority: 'settled' as const,
       task_outcome: taskOutcome as any, revision: workflow.revision + 1, receipts: [...workflow.receipts, receipt] };
     await new StateStore(workflowPath).write(next, { explicitSettle: true });
-    await new LockManager({ projectRoot: plan.project_root }).reclaimAbandoned('settled');
   }
   return {
     exit_code: result.exitCode ?? 1,
@@ -238,4 +271,5 @@ export async function executeExactRecovery(plan: ExactRecoveryPlan): Promise<{
     status,
     session_authority: authority,
   };
+  } finally { await release(); }
 }

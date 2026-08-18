@@ -13,6 +13,7 @@ export interface RunResult { statePath: string; state: OracleRunState }
 const sha = (b: Buffer|string) => createHash('sha256').update(b).digest('hex');
 async function exactDir(p: string) { const s = await lstat(p).catch(() => undefined); if (!s?.isDirectory() || s.isSymbolicLink()) throw new Error('PROJECT_ROOT_INVALID'); return await realpath(p); }
 async function exactFile(p: string) { const s = await lstat(p).catch(() => undefined); if (!s?.isFile() || s.isSymbolicLink()) throw new Error('MISSION_PATH_INVALID'); const b=await readFile(p); new TextDecoder('utf-8',{fatal:true}).decode(b); return b; }
+async function assertSafeOutput(p: string, root: string) { const abs=path.resolve(p); const rel=path.relative(path.resolve(root),abs); if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('OUTPUT_PATH_INVALID'); let c=path.dirname(abs); while(c!==path.dirname(c)){const s=await lstat(c).catch(()=>undefined); if(s?.isSymbolicLink()||(s&&!s.isDirectory())) throw new Error('OUTPUT_PARENT_INVALID'); if(c===path.resolve(root)) break; c=path.dirname(c);} const s=await lstat(abs).catch(()=>undefined); if(s&&(!s.isFile()||s.isSymbolicLink())) throw new Error('OUTPUT_PATH_INVALID'); }
 export async function runOracle(options: RunOptions): Promise<RunResult> {
   const root = await exactDir(options.projectRoot); const requestedMission = path.resolve(options.missionPath);
   const requestedRel = path.relative(path.resolve(options.projectRoot), requestedMission);
@@ -41,6 +42,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   const version = `${versionCheck.stdout}\n${versionCheck.stderr}`.trim();
   if (versionCheck.exitCode !== 0 || !/^0\.17\.1$/.test(version)) throw new Error('ORACLE_VERSION_UNSUPPORTED');
   const outputPath = path.join(dir,'output.md');
+  await assertSafeOutput(outputPath, dir);
   if (manifest?.copy_profile) { const s=await lstat(manifest.copy_profile).catch(()=>undefined); if (!s || s.isSymbolicLink() || !s.isDirectory()) throw new Error('COPY_PROFILE_INVALID'); }
   if (manifest?.attachments) for (const attachment of manifest.attachments) { const s=await lstat(attachment).catch(()=>undefined); if (!s || s.isSymbolicLink() || !s.isFile()) throw new Error('ATTACHMENT_INVALID'); }
   const initial: OracleRunState = { schema:'codex.chatgpt.oracle-run-state/v1', run_id:runId, project_root:root, mission_path:mission, mission_sha256:sha(bytes), mission:{path:mission,sha256:sha(bytes)}, mode:'browser', session_authority:'pre_submit', transport_status:'pending', task_outcome:'pending', oracle:{resolved_version:'0.17.1',session_locator:slug,slug,command} };
@@ -74,7 +76,8 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
     const out=await child;
     if (child.pid) { const rec=(await registry.list()).find(r=>r.id===runId); if(rec) await registry.upsert({...rec,state:'exited'}); }
     const stdout=out.stdout??''; const stderr=out.stderr??''; await writeFile(path.join(dir,'stdout.log'),stdout); await writeFile(path.join(dir,'stderr.log'),stderr);
-    const durable = await readFile(outputPath).catch(() => Buffer.from(''));
+    const outputStat = await lstat(outputPath).catch(() => undefined); if (outputStat && (!outputStat.isFile() || outputStat.isSymbolicLink())) throw new Error('OUTPUT_PATH_INVALID');
+    const durable = outputStat ? await readFile(outputPath) : Buffer.from('');
     let outcome:'EXECUTED'|'NOT_EXECUTED'|'BLOCKED'|'pending'='pending'; let authority: SessionAuthority=out.exitCode===0?'terminal_observed':'submitted_unknown';
     if (out.exitCode===0) { try { outcome=parseTaskOutcome(durable.toString('utf8')).outcome; } catch { authority='submitted_unknown'; } }
     if (out.exitCode===0 && durable.length===0) authority='submitted_unknown';
