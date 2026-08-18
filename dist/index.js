@@ -1133,6 +1133,9 @@ import { copyFile, lstat as lstat2, mkdir as mkdir4, readFile as readFile5, read
 import * as path5 from "node:path";
 import writeFileAtomic3 from "write-file-atomic";
 import { z as z4 } from "zod";
+function resolvePackageSource(metaUrl = import.meta.url) {
+  return path5.resolve(new URL("../../", metaUrl).pathname);
+}
 var RECEIPT_SCHEMA = "codex.chatgpt.install-receipt/v1";
 var WAL_SCHEMA = "codex.chatgpt.install-wal/v1";
 var InstallManifestSchema = z4.object({
@@ -2554,6 +2557,42 @@ async function proveNoSubmission(statePath) {
   };
 }
 
+// src/core/context/packer.ts
+import { readFile as readFile10 } from "node:fs/promises";
+async function packContext(inputs, maxBytes = 2e5) {
+  const files = [];
+  let used = 0;
+  for (const input of inputs) {
+    const content = await readFile10(input.path, "utf8");
+    const bytes = Buffer.byteLength(content);
+    if (used + bytes > maxBytes) break;
+    files.push({ path: input.path, content });
+    used += bytes;
+  }
+  const text = files.map((f) => `## ${f.path}
+
+${f.content}`).join("\n\n");
+  return { schema: "codex.chatgpt.context/v1", files, text };
+}
+
+// src/core/workspace/commands.ts
+async function setupWorkspace(options) {
+  const commands = [{ command: "devspace", args: ["doctor", "--root", options.root] }, { command: "tailscale", args: ["funnel", "status"] }];
+  if (options.dryRun || !options.runner) return { schema: "codex.chatgpt.workspace/v1", status: "DRY_RUN", commands };
+  const results = [];
+  for (const c of commands) results.push({ ...c, result: await options.runner.run(c.command, c.args) });
+  return { schema: "codex.chatgpt.workspace/v1", status: results.every((r) => r.result.code === 0) ? "READY" : "BLOCKED", results };
+}
+
+// src/core/diagnostics/incident.ts
+function diagnoseIncident(evidence) {
+  return { schema: "codex.chatgpt.incident/v1", status: evidence.length ? "ATTENTION_REQUIRED" : "HEALTHY", evidence };
+}
+
+// src/core/orchestration/config.ts
+var comprehensiveConfig = (lanes = 1) => ({ kind: "comprehensive", lanes, runtime: "common-run" });
+var multiConfig = (lanes = 2) => ({ kind: "multi", lanes, runtime: "common-run" });
+
 // src/index.ts
 var program = createCLI();
 await program.parseAsync(process.argv);
@@ -2594,16 +2633,20 @@ export {
   canAdvanceSessionAuthority,
   checkDevSpace,
   checkProfile,
+  comprehensiveConfig,
   createCLI,
   createLockAdapter,
   defaultChromeUserDataRoot,
+  diagnoseIncident,
   evaluateAuthSnapshot,
   executeExactRecovery,
   installOrUpdate,
   isValidTransition,
   launchProfileLogin,
   manifestFiles,
+  multiConfig,
   normalizeOracleSessionAuthority,
+  packContext,
   parseTaskOutcome,
   pidIsAlive,
   planExactRecovery,
@@ -2615,11 +2658,13 @@ export {
   recoverChatGptLogin,
   recoverPendingInstalls,
   recoveryArgv,
+  resolvePackageSource,
   rollbackInstall,
   runDoctor,
   runGate,
   runLocalGate,
   sessionAuthorityTransitions,
+  setupWorkspace,
   terminatePersistedProcess,
   validTransitions,
   validateReceiptChain,
