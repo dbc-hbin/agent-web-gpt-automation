@@ -232,6 +232,7 @@ var OracleRunStateSchema = z.object({
   project_root: z.string(),
   mission_path: z.string(),
   mission_sha256: Sha256.optional(),
+  mission: z.object({ path: z.string().min(1), sha256: Sha256.optional() }).strict().optional(),
   mode: z.literal("browser"),
   session_authority: SessionAuthority,
   transport_status: z.enum(["complete", "failed", "pending"]),
@@ -2118,7 +2119,7 @@ async function runOracle(options) {
   if (versionCheck.exitCode !== 0 || !/\b0\.17\.1\b/.test(`${versionCheck.stdout}
 ${versionCheck.stderr}`)) throw new Error("ORACLE_VERSION_UNSUPPORTED");
   const outputPath = path9.join(dir, "output.md");
-  const initial = { schema: "codex.chatgpt.oracle-run-state/v1", run_id: runId, project_root: root, mission_path: mission, mission_sha256: sha(bytes), mode: "browser", session_authority: "pre_submit", transport_status: "pending", task_outcome: "pending", oracle: { resolved_version: "0.17.1", session_locator: slug, slug, command } };
+  const initial = { schema: "codex.chatgpt.oracle-run-state/v1", run_id: runId, project_root: root, mission_path: mission, mission_sha256: sha(bytes), mission: { path: mission, sha256: sha(bytes) }, mode: "browser", session_authority: "pre_submit", transport_status: "pending", task_outcome: "pending", oracle: { resolved_version: "0.17.1", session_locator: slug, slug, command } };
   const lock4 = new LockManager({ projectRoot: root });
   const release = await lock4.acquire();
   let retainLock = false;

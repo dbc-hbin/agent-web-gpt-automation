@@ -36,7 +36,7 @@ export async function runOracle(options: RunOptions): Promise<RunResult> {
   const versionCheck = await execa(command[0], [...command.slice(1), ...(options.oracleArgs ?? []), '--version'], { cwd: root, shell: false, reject: false });
   if (versionCheck.exitCode !== 0 || !/\b0\.17\.1\b/.test(`${versionCheck.stdout}\n${versionCheck.stderr}`)) throw new Error('ORACLE_VERSION_UNSUPPORTED');
   const outputPath = path.join(dir,'output.md');
-  const initial: OracleRunState = { schema:'codex.chatgpt.oracle-run-state/v1', run_id:runId, project_root:root, mission_path:mission, mission_sha256:sha(bytes), mode:'browser', session_authority:'pre_submit', transport_status:'pending', task_outcome:'pending', oracle:{resolved_version:'0.17.1',session_locator:slug,slug,command} };
+  const initial: OracleRunState = { schema:'codex.chatgpt.oracle-run-state/v1', run_id:runId, project_root:root, mission_path:mission, mission_sha256:sha(bytes), mission:{path:mission,sha256:sha(bytes)}, mode:'browser', session_authority:'pre_submit', transport_status:'pending', task_outcome:'pending', oracle:{resolved_version:'0.17.1',session_locator:slug,slug,command} };
   const lock = new LockManager({ projectRoot: root }); const release = await lock.acquire();
   let retainLock = false;
   try {

@@ -260,6 +260,7 @@ export const OracleRunStateSchema = z.object({
   project_root: z.string(),
   mission_path: z.string(),
   mission_sha256: Sha256.optional(),
+  mission: z.object({ path: z.string().min(1), sha256: Sha256.optional() }).strict().optional(),
   mode: z.literal('browser'),
   session_authority: SessionAuthority,
   transport_status: z.enum(['complete', 'failed', 'pending']),
