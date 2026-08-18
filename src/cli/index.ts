@@ -15,6 +15,8 @@ import { createRequire } from 'node:module';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { setupWorkspace } from '../core/workspace/commands.js';
+import { readFile } from 'node:fs/promises';
+import { OracleManifestSchema } from '../types/index.js';
 const execFileAsync = promisify(execFile);
 const localCommandRunner = { run: async (command: string, args: string[]) => {
   try { const result = await execFileAsync(command, args, { encoding: 'utf8' }); return { code: 0, stdout: result.stdout, stderr: result.stderr }; }
@@ -206,8 +208,8 @@ export function createCLI(): Command {
   program
     .command('run')
     .description('Run Oracle workflow')
-    .requiredOption('--project-root <path>')
-    .requiredOption('--mission <path>')
+    .option('--project-root <path>', 'exact project root (derived from --manifest when omitted)')
+    .option('--mission <path>', 'exact mission path (derived from --manifest when omitted)')
     .option('--run-root <path>')
     .option('--manifest <path>')
     .option('--oracle-command <path>')
@@ -216,7 +218,16 @@ export function createCLI(): Command {
     .option('--dry-run', 'validate and plan without launching Oracle')
     .option('--devspace-url <url>', 'DevSpace MCP endpoint', 'http://127.0.0.1:7676/mcp')
     .action(async options => {
-      try { const client = createHttpDevSpaceClient(options.devspaceUrl); const devspace = { qualify: async (root: string) => { const { qualifyExactProjectRoot } = await import('../core/devspace/qualification.js'); const result = await qualifyExactProjectRoot(root, client); return { ok: result.ok, reason: result.code }; } }; console.log(JSON.stringify(await runOracle({ projectRoot: options.projectRoot, missionPath: options.mission, runRoot: options.runRoot, manifestPath: options.manifest, oracleCommand: options.oracleCommand ? [options.oracleCommand] : undefined, oracleArgs: options.oracleArg, oracleHome: options.oracleHome, dryRun: options.dryRun === true, devspace }), null, 2)); }
+      try {
+        let projectRoot = options.projectRoot as string | undefined;
+        let missionPath = options.mission as string | undefined;
+        if (options.manifest && (!projectRoot || !missionPath)) {
+          const parsed = OracleManifestSchema.parse(JSON.parse(await readFile(path.resolve(options.manifest), 'utf8')));
+          projectRoot ??= parsed.project_root;
+          missionPath ??= parsed.mission_path;
+        }
+        if (!projectRoot || !missionPath) throw new Error('RUN_BINDING_REQUIRED: provide --project-root and --mission, or a manifest containing both');
+        const client = createHttpDevSpaceClient(options.devspaceUrl); const devspace = { qualify: async (root: string) => { const { qualifyExactProjectRoot } = await import('../core/devspace/qualification.js'); const result = await qualifyExactProjectRoot(root, client); return { ok: result.ok, reason: result.code }; } }; console.log(JSON.stringify(await runOracle({ projectRoot, missionPath, runRoot: options.runRoot, manifestPath: options.manifest, oracleCommand: options.oracleCommand ? [options.oracleCommand] : undefined, oracleArgs: options.oracleArg, oracleHome: options.oracleHome, dryRun: options.dryRun === true, devspace }), null, 2)); }
       catch (e) { console.error(e instanceof Error ? e.message : e); process.exitCode = 1; }
     });
 

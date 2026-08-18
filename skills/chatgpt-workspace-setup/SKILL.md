@@ -40,12 +40,20 @@ Afterward the helper starts `devspace serve` hidden and creates an HTTPS Funnel
 to `127.0.0.1:7676`. During `devspace init`, enter only the listed roots and
 the public origin `https://<hostname>` (without `/mcp`).
 
-Before starting or restarting DevSpace 1.0.4, run the installed
-The compatibility preflight run by `awgpt doctor` hash-validates the exact upstream
-`dist/workspaces.js`, backs it up, and applies bounded concurrent discovery
-that skips transient `test-*` and cache trees. If it reports
-`service_restart_required=true`, restart DevSpace before any Oracle
-submission. Unknown versions or hashes fail closed.
+The TypeScript helper does not patch DevSpace or manage its service. It exposes
+the bounded commands that are actually implemented:
+
+```powershell
+awgpt workspace setup --root C:\projects\example
+awgpt workspace setup --root C:\projects\example --apply
+awgpt workspace doctor --root C:\projects\example
+```
+
+`workspace setup` previews `devspace doctor --root <root>` and
+`tailscale funnel status`; `--apply` executes those commands with the local
+process environment. `workspace doctor` is read-only and never applies config
+changes. Use DevSpace's own interactive setup and the Tailscale CLI separately
+when a service or Funnel must be configured.
 
 On Windows, any Startup shortcut or service wrapper must read
 `%USERPROFILE%\.devspace\config.json` at every launch and derive

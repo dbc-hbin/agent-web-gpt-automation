@@ -565,7 +565,7 @@ async function terminatePersistedProcess(record) {
     if (error.code !== "ESRCH") throw error;
   }
   for (let attempt = 0; attempt < 50 && pidIsAlive(record.pid); attempt += 1) {
-    await new Promise((resolve13) => setTimeout(resolve13, 100));
+    await new Promise((resolve14) => setTimeout(resolve14, 100));
   }
   if (pidIsAlive(record.pid)) {
     try {
@@ -937,10 +937,10 @@ async function launchProfileLogin(target) {
     stdio: "ignore",
     windowsHide: true
   });
-  await new Promise((resolve13, reject) => {
+  await new Promise((resolve14, reject) => {
     const onSpawn = () => {
       child.off("error", onError);
-      resolve13();
+      resolve14();
     };
     const onError = (error) => {
       child.off("spawn", onSpawn);
@@ -1734,11 +1734,11 @@ async function cdpEvaluate(webSocketUrl) {
     const message = JSON.parse(String(event.data));
     if (message.id != null) pending.get(message.id)?.(message.error ? { error: message.error } : message.result);
   });
-  await new Promise((resolve13, reject) => {
-    socket.addEventListener("open", () => resolve13());
+  await new Promise((resolve14, reject) => {
+    socket.addEventListener("open", () => resolve14());
     socket.addEventListener("error", () => reject(new Error("AUTH_PREFLIGHT_CDP_CONNECT_FAILED")));
   });
-  const call = (method, params = {}) => new Promise((resolve13, reject) => {
+  const call = (method, params = {}) => new Promise((resolve14, reject) => {
     const id = ++nextId;
     const timer = setTimeout(() => {
       pending.delete(id);
@@ -1747,7 +1747,7 @@ async function cdpEvaluate(webSocketUrl) {
     pending.set(id, (value) => {
       clearTimeout(timer);
       pending.delete(id);
-      resolve13(value);
+      resolve14(value);
     });
     socket.send(JSON.stringify({ id, method, params }));
   });
@@ -1766,7 +1766,7 @@ async function cdpEvaluate(webSocketUrl) {
     })()`;
     let latest;
     for (let attempt = 0; attempt < 30; attempt += 1) {
-      await new Promise((resolve13) => setTimeout(resolve13, 1e3));
+      await new Promise((resolve14) => setTimeout(resolve14, 1e3));
       const response = await call("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
       if (!response.exceptionDetails && response.result?.value) {
         latest = response.result.value;
@@ -1809,7 +1809,7 @@ async function preflightCopiedProfile(profilePath, chromePath) {
         if (/^\d+$/.test(port)) break;
       } catch {
       }
-      await new Promise((resolve13) => setTimeout(resolve13, 100));
+      await new Promise((resolve14) => setTimeout(resolve14, 100));
     }
     if (!port || !/^\d+$/.test(port)) throw new Error("AUTH_PREFLIGHT_CHROME_START_TIMEOUT");
     return await probeBrowserAuth(`http://127.0.0.1:${port}`);
@@ -1817,7 +1817,7 @@ async function preflightCopiedProfile(profilePath, chromePath) {
     proc.kill("SIGTERM");
     await Promise.race([
       proc.catch(() => void 0),
-      new Promise((resolve13) => setTimeout(resolve13, 5e3))
+      new Promise((resolve14) => setTimeout(resolve14, 5e3))
     ]);
     if (proc.exitCode == null) proc.kill("SIGKILL");
   }
@@ -2655,6 +2655,7 @@ async function setupWorkspace(options) {
 var doctorWorkspace = (root, runner) => setupWorkspace({ root, runner, dryRun: runner === void 0 });
 
 // src/cli/index.ts
+import { readFile as readFile11 } from "node:fs/promises";
 var execFileAsync = promisify(execFile);
 var localCommandRunner = { run: async (command, args) => {
   try {
@@ -2796,15 +2797,23 @@ function createCLI() {
       process.exitCode = 2;
     }
   });
-  program2.command("run").description("Run Oracle workflow").requiredOption("--project-root <path>").requiredOption("--mission <path>").option("--run-root <path>").option("--manifest <path>").option("--oracle-command <path>").option("--oracle-arg <value...>").option("--oracle-home <path>").option("--dry-run", "validate and plan without launching Oracle").option("--devspace-url <url>", "DevSpace MCP endpoint", "http://127.0.0.1:7676/mcp").action(async (options) => {
+  program2.command("run").description("Run Oracle workflow").option("--project-root <path>", "exact project root (derived from --manifest when omitted)").option("--mission <path>", "exact mission path (derived from --manifest when omitted)").option("--run-root <path>").option("--manifest <path>").option("--oracle-command <path>").option("--oracle-arg <value...>").option("--oracle-home <path>").option("--dry-run", "validate and plan without launching Oracle").option("--devspace-url <url>", "DevSpace MCP endpoint", "http://127.0.0.1:7676/mcp").action(async (options) => {
     try {
+      let projectRoot = options.projectRoot;
+      let missionPath = options.mission;
+      if (options.manifest && (!projectRoot || !missionPath)) {
+        const parsed = OracleManifestSchema.parse(JSON.parse(await readFile11(path12.resolve(options.manifest), "utf8")));
+        projectRoot ??= parsed.project_root;
+        missionPath ??= parsed.mission_path;
+      }
+      if (!projectRoot || !missionPath) throw new Error("RUN_BINDING_REQUIRED: provide --project-root and --mission, or a manifest containing both");
       const client = createHttpDevSpaceClient(options.devspaceUrl);
       const devspace = { qualify: async (root) => {
         const { qualifyExactProjectRoot: qualifyExactProjectRoot2 } = await import("./qualification-5POFYSVJ.js");
         const result = await qualifyExactProjectRoot2(root, client);
         return { ok: result.ok, reason: result.code };
       } };
-      console.log(JSON.stringify(await runOracle({ projectRoot: options.projectRoot, missionPath: options.mission, runRoot: options.runRoot, manifestPath: options.manifest, oracleCommand: options.oracleCommand ? [options.oracleCommand] : void 0, oracleArgs: options.oracleArg, oracleHome: options.oracleHome, dryRun: options.dryRun === true, devspace }), null, 2));
+      console.log(JSON.stringify(await runOracle({ projectRoot, missionPath, runRoot: options.runRoot, manifestPath: options.manifest, oracleCommand: options.oracleCommand ? [options.oracleCommand] : void 0, oracleArgs: options.oracleArg, oracleHome: options.oracleHome, dryRun: options.dryRun === true, devspace }), null, 2));
     } catch (e) {
       console.error(e instanceof Error ? e.message : e);
       process.exitCode = 1;
@@ -3051,7 +3060,7 @@ var ProcessSupervisor = class {
         }).catch(() => {
           exited = true;
         }),
-        new Promise((resolve13) => setTimeout(resolve13, 5e3))
+        new Promise((resolve14) => setTimeout(resolve14, 5e3))
       ]);
     }
     if (!gracefulSignalAccepted || !exited || this.processGroupIsAlive(state.pid)) {
@@ -3127,12 +3136,12 @@ var ProcessSupervisor = class {
 };
 
 // src/core/context/packer.ts
-import { readFile as readFile11 } from "node:fs/promises";
+import { readFile as readFile12 } from "node:fs/promises";
 async function packContext(inputs, maxBytes = 2e5) {
   const files = [];
   let used = 0;
   for (const input of inputs) {
-    const content = await readFile11(input.path, "utf8");
+    const content = await readFile12(input.path, "utf8");
     const bytes = Buffer.byteLength(content);
     if (used + bytes > maxBytes) break;
     files.push({ path: input.path, content });

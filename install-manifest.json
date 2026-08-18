@@ -6,12 +6,17 @@
     "dist/*.map",
     "package.json",
     "skills/chatgpt-oracle-runtime/SKILL.md",
+    "skills/chatgpt-oracle-runtime/agents/openai.yaml",
     "skills/chatgpt-question-designer/SKILL.md",
+    "skills/chatgpt-question-designer/agents/openai.yaml",
     "skills/chatgpt-workspace-setup/SKILL.md",
     "skills/chatgpt-workspace-setup/agents/openai.yaml",
     "skills/mcp-update-guard/SKILL.md",
+    "skills/mcp-update-guard/agents/openai.yaml",
     "skills/ultra-economy-mode/SKILL.md",
+    "skills/ultra-economy-mode/agents/openai.yaml",
     "skills/web-multi-gpt/SKILL.md",
+    "skills/web-multi-gpt/agents/openai.yaml",
     "contracts/orchestrator/phase5-recovery-v1.json"
   ]
 }

@@ -17,7 +17,18 @@ describe('TS-native package surfaces', () => {
       expect(text).not.toMatch(/python|\.py/i);
     }
     const manifest = await manifestFiles(root);
-    for (const name of skills) expect(manifest.files).toContain(`skills/${name}/SKILL.md`);
+    for (const name of skills) {
+      expect(manifest.files).toContain(`skills/${name}/SKILL.md`);
+      expect(manifest.files).toContain(`skills/${name}/agents/openai.yaml`);
+    }
+    expect(manifest.files.filter(file => file.endsWith('/agents/openai.yaml'))).toHaveLength(6);
+  });
+
+  it('accepts a validated manifest as the run binding source', async () => {
+    const { createCLI } = await import('../src/cli/index.js');
+    const help = createCLI().commands.find(command => command.name() === 'run')?.helpInformation() ?? '';
+    expect(help).toContain('--manifest');
+    expect(help).not.toContain('--project-root <path> (required)');
   });
 
   it('resolves packaged source independently of cwd', () => {
