@@ -150,6 +150,9 @@ export class LockManager {
     const quarantine = `${this.lockPath}.reclaim-${crypto.randomUUID()}`;
     let quarantined = false;
     try {
+      // Close the check/rename window: a contender may have replaced the
+      // sidecar since the dead-owner probe. Never quarantine on stale evidence.
+      if (await readFile(ownerPath, 'utf8') !== ownerBytes) throw new Error('PROJECT_LOCK_OWNER_CHANGED');
       await rename(lockDirectory, quarantine);
       quarantined = true;
     } catch (error) {
@@ -168,6 +171,13 @@ export class LockManager {
       return;
     }
     try {
+      // If a contender acquired and published a new owner after quarantine,
+      // preserve its evidence and leave its lock directory untouched.
+      const currentOwner = JSON.parse(await readFile(ownerPath, 'utf8')) as { token?: string };
+      if (currentOwner.token !== owner.token) {
+        await rm(quarantine, { recursive: true, force: true });
+        throw new Error('PROJECT_LOCK_OWNER_CHANGED');
+      }
       await rm(quarantine, { recursive: true, force: false });
       try {
         const currentOwner = JSON.parse(await readFile(ownerPath, 'utf8')) as { token?: string };

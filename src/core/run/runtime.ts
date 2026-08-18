@@ -102,17 +102,25 @@ export async function stopRecorded(statePath:string): Promise<void> {
   if (records.length === 0 && state.process) {
     const p = state.process;
     if (!p.started_at || !p.cwd) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
-    let startedAt = p.started_at;
     if (process.platform !== 'win32') {
-      const probe = await execa('ps', ['-p', String(p.pid), '-o', 'lstart='], { reject: false });
+      const probe = await execa('ps', ['-p', String(p.pid), '-o', 'lstart=', '-o', 'command='], { reject: false });
       if (probe.exitCode !== 0 || !probe.stdout.trim()) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
-      const observed = Date.parse(probe.stdout.trim());
+      const line = probe.stdout.trim();
+      const observed = Date.parse(line.slice(0, 24));
       if (!Number.isFinite(observed)) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
-      startedAt = new Date(observed).toISOString();
+      // The persisted start time is authoritative: an observed time may only
+      // corroborate it, never repair or replace it (PID recycling is unsafe).
+      if (Math.abs(observed - Date.parse(p.started_at)) > 2_000) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
+      const expectedCommand = [p.command, ...p.args].join(' ').replace(/\s+/g, ' ').trim();
+      const observedCommand = line.slice(24).replace(/\s+/g, ' ').trim();
+      if (!observedCommand || observedCommand !== expectedCommand) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
+      const cwdProbe = await execa('lsof', ['-a', '-p', String(p.pid), '-d', 'cwd', '-Fn'], { reject: false });
+      const observedCwd = cwdProbe.exitCode === 0 ? cwdProbe.stdout.split('\n').find(v => v.startsWith('n'))?.slice(1) : undefined;
+      if (!observedCwd || await realpath(observedCwd).catch(() => '') !== await realpath(p.cwd).catch(() => '')) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
     }
     record = { id: state.run_id, pid: p.pid, command: p.command, args: p.args,
       cwd: p.cwd, project_root: state.project_root, run_id: state.run_id,
-      started_at: startedAt, state: 'running' };
+      started_at: p.started_at, state: 'running' };
   }
   if (!record || records.length > 1) throw new Error('STOP_OWNERSHIP_AMBIGUOUS');
   await terminatePersistedProcess(record);

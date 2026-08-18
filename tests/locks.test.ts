@@ -71,4 +71,18 @@ describe('LockManager', () => {
     await expect(manager.tryAcquire()).rejects.toMatchObject({ code: 'EACCES' });
     acquire.mockRestore();
   });
+
+  it('refuses reclaim when owner evidence changes in the check/rename window', async () => {
+    const root = `/tmp/reclaim-race-${crypto.randomUUID()}`;
+    const manager = new LockManager({ projectRoot: root, retries: 0 });
+    const lockDirectory = `${manager.getLockPath()}.lock`;
+    await mkdir(lockDirectory);
+    const ownerPath = `${manager.getLockPath()}.owner.json`;
+    const replacement = { schema: 'codex.chatgpt.project-lock-owner/v1', pid: 2_000_000_001, token: crypto.randomUUID(), project_root: path.resolve(root) };
+    await writeFile(ownerPath, JSON.stringify({ ...replacement, pid: 2_000_000_000, token: crypto.randomUUID() }));
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => { writeFile(ownerPath, JSON.stringify(replacement)); const error = Object.assign(new Error('dead'), { code: 'ESRCH' }); throw error; });
+    await expect(manager.reclaimAbandoned('settled')).rejects.toThrow('PROJECT_LOCK_OWNER_CHANGED');
+    await access(lockDirectory);
+    kill.mockRestore();
+  });
 });
